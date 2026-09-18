@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
 """power-probe.py - ile prądu bierze ta maszyna?
 
 Wykrywa i odczytuje wszystkie dostępne w Linuksie źródła pomiaru mocy, od

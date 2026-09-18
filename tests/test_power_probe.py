@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
 """Testy parsowania i liczenia w scripts/power-probe.py (bez sprzętu)."""
 
 import importlib.util
