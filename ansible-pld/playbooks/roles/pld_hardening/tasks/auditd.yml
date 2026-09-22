@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Auditd :: explain check-mode limitation when package is absent"
+  ansible.builtin.debug:
+    msg: >-
+      audit is not installed; check mode validated the poldek transaction but
+      audit configuration will be exercised by the first real run
+  when: not _pld_auditd_usable
+
+- name: "Auditd :: configure PLD audit subsystem"
+  when: _pld_auditd_usable
+  block:
+    - name: "Auditd :: remove PLD no-audit default"
+      ansible.builtin.file:
+        path: /etc/audit/rules.d/10-no-audit.rules
+        state: absent
+      notify: Load PLD audit rules
+
+    - name: "Auditd :: deploy base audit settings"
+      ansible.builtin.template:
+        src: audit-base.rules.j2
+        dest: /etc/audit/rules.d/10-pld-base.rules
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Load PLD audit rules
+
+    - name: "Auditd :: deploy security watches and syscall rules"
+      ansible.builtin.template:
+        src: audit-hardening.rules.j2
+        dest: /etc/audit/rules.d/30-pld-hardening.rules
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Load PLD audit rules
+
+    - name: "Auditd :: deploy final audit mode"
+      ansible.builtin.template:
+        src: audit-finalize.rules.j2
+        dest: /etc/audit/rules.d/99-pld-finalize.rules
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Load PLD audit rules
+
+    # augenrules merges every file in rules.d and deduplicates only -D and -e,
+    # so an old copy would load each watch and syscall rule twice.
+    - name: "Auditd :: remove rule files left by an earlier version of this role"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ pld_hardening_legacy_files | select('match', '^/etc/audit/rules[.]d/') | list }}"
+      notify: Load PLD audit rules
+
+    - name: "Auditd :: configure log retention and disk policy"
+      ansible.builtin.lineinfile:
+        path: /etc/audit/auditd.conf
+        regexp: '^\s*{{ item.key }}\s*='
+        line: "{{ item.key }} = {{ item.value }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - { key: max_log_file, value: "{{ pld_auditd_max_log_file }}" }
+        - { key: num_logs, value: "{{ pld_auditd_num_logs }}" }
+        - { key: max_log_file_action, value: "{{ pld_auditd_max_log_file_action }}" }
+        - { key: space_left_action, value: "{{ pld_auditd_space_left_action }}" }
+        - { key: admin_space_left_action, value: "{{ pld_auditd_admin_space_left_action }}" }
+        - { key: disk_full_action, value: "{{ pld_auditd_disk_full_action }}" }
+      loop_control:
+        label: "{{ item.key }}={{ item.value }}"
+      notify: Reload PLD auditd config
+
+    - name: "Auditd :: service enabled and running"
+      ansible.builtin.systemd:
+        name: "{{ pld_auditd_service_name }}"
+        enabled: true
+        state: started
+
+    - name: "Auditd :: compile rules before loading them"
+      ansible.builtin.command: /sbin/augenrules --check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: "Auditd :: apply pending rules before verification"
+      ansible.builtin.meta: flush_handlers

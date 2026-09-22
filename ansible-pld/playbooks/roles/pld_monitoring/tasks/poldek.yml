@@ -1,0 +1,160 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Pld nrpe :: verify PLD tools and paths"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/poldek
+    - /usr/lib/nagios/plugins
+    - /etc/nagios/nrpe.d
+  register: _pld_required_paths
+
+- name: "Pld nrpe :: require Poldek and NRPE"
+  ansible.builtin.assert:
+    that:
+      - _pld_required_paths.results | map(attribute='stat.exists') | min
+    fail_msg: "This task is only for a PLD host with Poldek and NRPE installed."
+
+- name: "Pld nrpe :: state directory"
+  ansible.builtin.file:
+    path: /var/lib/nagios/poldek-monitoring
+    state: directory
+    owner: root
+    group: nagios
+    mode: "0750"
+
+- name: "Pld nrpe :: install cached update scripts"
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: check_poldek_updates, dest: /usr/lib/nagios/plugins/check_poldek_updates }
+    - { src: refresh_poldek_updates, dest: /usr/local/sbin/refresh_poldek_updates }
+  register: _pld_update_scripts
+
+- name: "Pld nrpe :: daily Poldek refresh"
+  ansible.builtin.copy:
+    dest: /etc/cron.d/nagios-poldek-updates
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. NRPE reads the cached result; it never contacts repos.
+      {{ nrpe_poldek_refresh_minute | default(17) }} {{ nrpe_poldek_refresh_hour | default(4) }} * * * root /usr/local/sbin/refresh_poldek_updates >/dev/null 2>&1
+
+- name: "Pld nrpe :: reachable repository mirror"
+  ansible.builtin.replace:
+    path: "{{ nrpe_poldek_repository_file }}"
+    regexp: "{{ nrpe_poldek_repository_from | regex_escape }}"
+    replace: "{{ nrpe_poldek_repository_to }}"
+    backup: true
+  register: _pld_poldek_repository
+  when:
+    - nrpe_poldek_repository_file is defined
+    - nrpe_poldek_repository_from is defined
+    - nrpe_poldek_repository_to is defined
+
+- name: "Pld nrpe :: Poldek NRPE command"
+  ansible.builtin.copy:
+    dest: /etc/nagios/nrpe.d/check_poldek_updates.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      command[check_poldek_updates]=/usr/lib/nagios/plugins/check_poldek_updates --stale-hours {{ nrpe_poldek_stale_hours | default(30) }} --hostname {{ monitoring_id | default(inventory_hostname_short) }}
+  register: _pld_poldek_nrpe_cfg
+
+- name: "Pld nrpe :: remove Debian-only command files"
+  ansible.builtin.file:
+    path: "/etc/nagios/nrpe.d/{{ item }}"
+    state: absent
+  loop:
+    - check_apt.cfg
+    - check_packages.cfg
+    - check_log_apt.cfg
+  register: _pld_debian_commands
+
+- name: "Pld nrpe :: remove RPM command definitions superseded by managed files"
+  ansible.builtin.lineinfile:
+    path: /etc/nagios/nrpe.d/commands.cfg
+    regexp: "^command\\[{{ item }}\\]="
+    state: absent
+    backup: true
+  loop:
+    - check_disk_root
+    - check_entropy
+    - check_load
+    - check_memory
+    - check_packages
+    - check_procs_total
+    - check_procs_zombie
+    - check_uptime
+    - check_users
+  register: _pld_vendor_commands
+
+- name: "Pld nrpe :: inspect cached Poldek state"
+  ansible.builtin.stat:
+    path: /var/lib/nagios/poldek-monitoring/status
+  register: _pld_poldek_state
+
+- name: "Pld nrpe :: initialize Poldek state"
+  ansible.builtin.command: /usr/local/sbin/refresh_poldek_updates
+  environment:
+    POLDEK_TIMEOUT_SECONDS: "{{ nrpe_poldek_command_timeout | default(600) }}"
+  register: _pld_poldek_refresh
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - not (_pld_poldek_state.stat.exists | default(false)) or (nrpe_poldek_force_refresh | default(false) | bool)
+
+- name: "Pld nrpe :: restart after command changes"
+  ansible.builtin.systemd:
+    name: "{{ nrpe_service_name }}"
+    state: restarted
+  when:
+    - >-
+      _pld_update_scripts is changed or
+      _pld_poldek_nrpe_cfg is changed or
+      _pld_debian_commands is changed or
+      _pld_vendor_commands is changed or
+      _pld_poldek_repository is changed
+
+- name: "Pld nrpe :: verify no duplicate active command names"
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -hE '^[[:space:]]*command\[[^]]+\]=' /etc/nagios/nrpe.d/*.cfg \
+      | sed -n 's/^[[:space:]]*command\[\([^]]*\)\].*/\1/p' \
+      | sort | uniq -d
+  args:
+    executable: /bin/bash
+  register: _pld_duplicate_commands
+  changed_when: false
+  failed_when: _pld_duplicate_commands.stdout | length > 0
+  when: not ansible_check_mode
+
+- name: "Pld nrpe :: verify Poldek check as nagios"
+  ansible.builtin.command:
+    argv:
+      - "{{ nrpe_runuser_path }}"
+      - -u
+      - nagios
+      - --
+      - /usr/lib/nagios/plugins/check_poldek_updates
+      - --stale-hours
+      - "{{ nrpe_poldek_stale_hours | default(30) }}"
+      - --hostname
+      - "{{ monitoring_id | default(inventory_hostname_short) }}"
+  register: _pld_poldek_check
+  changed_when: false
+  failed_when: _pld_poldek_check.rc not in [0, 1]
+  when: not ansible_check_mode
+
+- name: "Pld nrpe :: show Poldek result"
+  ansible.builtin.debug:
+    msg: "{{ _pld_poldek_check.stdout }}"
+  when: not ansible_check_mode
+...

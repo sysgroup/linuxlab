@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Deploy only with NRPE. Optional per-host tuning: extra arguments,
+# perfdata-only mounts, minimum-free-space mappings and raw mount policies.
+
+- name: "Check_all_disks :: detect NRPE plugins dir"
+  ansible.builtin.stat:
+    path: /usr/lib/nagios/plugins
+  register: _nrpe_plugins_dir
+
+- name: "Check_all_disks :: deploy plugin + NRPE command (when NRPE present)"
+  when: _nrpe_plugins_dir.stat.exists | default(false)
+  block:
+    - name: "Check_all_disks :: install plugin"
+      ansible.builtin.copy:
+        src: check_all_disks
+        dest: /usr/lib/nagios/plugins/check_all_disks
+        owner: root
+        group: root
+        mode: "0755"
+      register: _cad_plugin
+
+    - name: "Check_all_disks :: per-mount overrides (/etc/nagios/check_all_disks.conf)"
+      ansible.builtin.copy:
+        dest: /etc/nagios/check_all_disks.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible - per-mount policies for check_all_disks.
+          # Formats:
+          #   MOUNT NOALERT
+          #   MOUNT MINFREE SIZE
+          #   MOUNT SPACE_WARN SPACE_CRIT INODE_WARN INODE_CRIT
+          {% for mount in nrpe_check_all_disks_no_alert_mounts | default([]) %}
+          {{ mount }} NOALERT
+          {% endfor %}
+          {% for mount, minimum in (nrpe_check_all_disks_min_free | default({})).items() %}
+          {{ mount }} MINFREE {{ minimum }}
+          {% endfor %}
+          {% for line in nrpe_check_all_disks_overrides | default([]) %}
+          {{ line }}
+          {% endfor %}
+      register: _cad_overrides
+
+    - name: "Check_all_disks :: NRPE command definition"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_all_disks.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          command[check_all_disks]=/usr/lib/nagios/plugins/check_all_disks{{ ' ' ~ nrpe_check_all_disks_args if (nrpe_check_all_disks_args | default('')) else '' }}
+      register: _cad_cmd
+
+    - name: "Check_all_disks :: restart NRPE when anything changed"
+      ansible.builtin.systemd:
+        name: "{{ nrpe_service_name }}"
+        state: restarted
+      when: _cad_plugin is changed or _cad_cmd is changed or _cad_overrides is changed
+
+    - name: "Check_all_disks :: verify plugin runs"
+      ansible.builtin.command: /usr/lib/nagios/plugins/check_all_disks
+      register: _cad_check
+      changed_when: false
+      failed_when: _cad_check.rc not in [0, 1, 2]
+
+    - name: "Check_all_disks :: show plugin output"
+      ansible.builtin.debug:
+        msg: "{{ _cad_check.stdout }}"
+...

@@ -1,0 +1,10 @@
+# Local controller credentials and inventory overrides must not be committed.
+inventory/local.yml
+inventory/local.ini
+inventory/private/
+*.vault.yml
+*.retry
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ansible/

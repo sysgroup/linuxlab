@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: PLD platform guard
+  ansible.builtin.import_tasks: assert.yml
+
+- name: "Packages :: select the monitoring profile"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: >-
+      {{ (pld_base_core_packages + pld_base_monitoring_packages) | unique | sort }}
+
+- name: Install the PLD monitoring package profile
+  ansible.builtin.import_tasks: install.yml

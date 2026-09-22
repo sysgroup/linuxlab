@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# check_all_disks - Nagios/NRPE plugin: auto-discover every "valuable" mounted
+# filesystem and check BOTH space and inode usage in one pass.
+#
+# Stock check_disk needs one -p <path> per mount. This plugin enumerates the
+# filesystems that are actually mounted.
+#
+# Skipped by design: pseudo/virtual filesystems, snap (squashfs) and Docker
+# overlay mounts (they only alias the underlying real fs). vfat (/boot/efi) has
+# no inodes - space is checked, inodes reported as n/a, never alerted.
+#
+# Output: one aggregate line (worst status wins) + Nagios perfdata per mount,
+# so PNP/Grafana graphs each filesystem separately.
+#
+# Exit: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN (Nagios convention).
+set -u
+
+PROG="${0##*/}"
+
+# --- defaults (percent USED) --------------------------------------------------
+SPACE_WARN=85
+SPACE_CRIT=95
+INODE_WARN=85
+INODE_CRIT=95
+
+# Filesystem types that never represent real, monitorable storage.
+EXCLUDE_TYPES="tmpfs devtmpfs squashfs overlay aufs efivarfs iso9660 ramfs \
+nsfs tracefs debugfs mqueue proc sysfs cgroup cgroup2 autofs binfmt_misc \
+configfs bpf devpts securityfs pstore fusectl fuse.gvfsd-fuse fuse.portal \
+rpc_pipefs selinuxfs"
+
+# Mount points under these prefixes are skipped (container/loop plumbing).
+EXCLUDE_PATHS="/snap /var/lib/docker /run /dev /proc /sys"
+
+# Per-mount policy file (# comments):
+#   MOUNT SWARN SCRIT IWARN ICRIT  - custom thresholds
+#   MOUNT NOALERT                  - collect perfdata, never change check status
+#   MOUNT MINFREE SIZE             - CRITICAL below SIZE free; no space-% alert
+# This keeps exceptional project/archive volumes visible without generating
+# notifications, while threshold overrides remain available where appropriate.
+OVERRIDES="/etc/nagios/check_all_disks.conf"
+
+usage() {
+	cat <<EOF
+Usage: $PROG [-w SPACE_WARN] [-c SPACE_CRIT] [-W INODE_WARN] [-C INODE_CRIT]
+             [-x MOUNT]... [-f OVERRIDES_FILE]
+Percent-USED thresholds (defaults: space ${SPACE_WARN}/${SPACE_CRIT},
+inode ${INODE_WARN}/${INODE_CRIT}). -x excludes an extra mount point.
+Per-mount policies read from ${OVERRIDES}:
+  MOUNT SWARN SCRIT IWARN ICRIT
+  MOUNT NOALERT
+  MOUNT MINFREE SIZE
+EOF
+}
+
+EXTRA_EXCLUDES=""
+while getopts "w:c:W:C:x:f:h" opt; do
+	case "$opt" in
+		w) SPACE_WARN=$OPTARG ;;
+		c) SPACE_CRIT=$OPTARG ;;
+		W) INODE_WARN=$OPTARG ;;
+		C) INODE_CRIT=$OPTARG ;;
+		x) EXTRA_EXCLUDES="$EXTRA_EXCLUDES $OPTARG" ;;
+		f) OVERRIDES=$OPTARG ;;
+		h) usage; exit 3 ;;
+		*) usage; exit 3 ;;
+	esac
+done
+
+in_list() {  # needle haystack...
+	local needle=$1; shift
+	local x
+	for x in "$@"; do [ "$x" = "$needle" ] && return 0; done
+	return 1
+}
+
+join_by() {  # SEP item...
+	local sep=$1; shift
+	[ "$#" -eq 0 ] && return 0
+	printf '%s' "$1"; shift
+	printf '%s' "${@/#/$sep}"
+}
+
+# Format bytes with one decimal place, without relying on numfmt (not present
+# on every monitored distribution).
+human_bytes() {
+	local bytes=${1:-0} unit divisor whole remainder decimal
+	case "$bytes" in
+		''|*[!0-9]*) printf 'n/a'; return ;;
+	esac
+
+	if [ "$bytes" -ge 1099511627776 ]; then
+		unit="TiB"; divisor=1099511627776
+	elif [ "$bytes" -ge 1073741824 ]; then
+		unit="GiB"; divisor=1073741824
+	elif [ "$bytes" -ge 1048576 ]; then
+		unit="MiB"; divisor=1048576
+	elif [ "$bytes" -ge 1024 ]; then
+		unit="KiB"; divisor=1024
+	else
+		printf '%s B' "$bytes"
+		return
+	fi
+
+	whole=$((bytes / divisor))
+	remainder=$((bytes % divisor))
+	decimal=$(((remainder * 10 + divisor / 2) / divisor))
+	if [ "$decimal" -eq 10 ]; then
+		whole=$((whole + 1))
+		decimal=0
+	fi
+	printf '%s.%s %s' "$whole" "$decimal" "$unit"
+}
+
+format_capacity() {
+	local percent=$1 used=$2 size=$3 available=$4
+	printf '%s%% used (%s of %s, %s free)' \
+		"$percent" "$(human_bytes "$used")" "$(human_bytes "$size")" \
+		"$(human_bytes "$available")"
+}
+
+# Convert an integer size with an optional binary/decimal unit to bytes.
+# Examples: 500MiB, 50GiB, 2TiB, 50GB.
+parse_size_bytes() {
+	local raw=${1:-} number multiplier
+	case "${raw^^}" in
+		*TIB) number=${raw:0:${#raw}-3}; multiplier=1099511627776 ;;
+		*GIB) number=${raw:0:${#raw}-3}; multiplier=1073741824 ;;
+		*MIB) number=${raw:0:${#raw}-3}; multiplier=1048576 ;;
+		*KIB) number=${raw:0:${#raw}-3}; multiplier=1024 ;;
+		*TB)  number=${raw:0:${#raw}-2}; multiplier=1000000000000 ;;
+		*GB)  number=${raw:0:${#raw}-2}; multiplier=1000000000 ;;
+		*MB)  number=${raw:0:${#raw}-2}; multiplier=1000000 ;;
+		*KB)  number=${raw:0:${#raw}-2}; multiplier=1000 ;;
+		*B)   number=${raw:0:${#raw}-1}; multiplier=1 ;;
+		*)    number=$raw; multiplier=1 ;;
+	esac
+	case "$number" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	printf '%s' "$((number * multiplier))"
+}
+
+# Look up per-mount policy; echoes thresholds, NOALERT, MINFREE SIZE, or nothing.
+lookup_override() {
+	[ -r "$OVERRIDES" ] || return 0
+	awk -v m="$1" '
+		/^[[:space:]]*#/ || NF < 2 { next }
+		$1 != m { next }
+		toupper($2) == "NOALERT" { print "NOALERT"; exit }
+		toupper($2) == "MINFREE" && NF >= 3 { print "MINFREE", $3; exit }
+		NF >= 5 { print $2, $3, $4, $5; exit }
+	' "$OVERRIDES"
+}
+
+worst=0            # numeric exit status accumulator
+crit_msg=()
+warn_msg=()
+no_alert_msg=()
+min_free_msg=()
+perfdata=()
+checked=0
+no_alert_count=0
+min_free_count=0
+highest_space_pct=-1
+highest_space_target=""
+highest_space_size=0
+highest_space_used=0
+highest_space_available=0
+
+# One df call, fixed field order, mount target LAST so `read` keeps spaces in it.
+# pcent = space use%, ipcent = inode use% ("-" when the fs has no inodes).
+while read -r fstype size used available pcent ipcent target; do
+	[ -z "$target" ] && continue
+
+	sp=${pcent%\%}
+	ip=${ipcent%\%}
+	# Skip the header row (and any malformed line): a data row always has a
+	# numeric space-use%. Guards against localized df headers too.
+	case "$sp" in ''|*[!0-9]*) continue ;; esac
+
+	in_list "$fstype" $EXCLUDE_TYPES && continue
+
+	skip=0
+	for p in $EXCLUDE_PATHS $EXTRA_EXCLUDES; do
+		case "$target" in
+			"$p"|"$p"/*) skip=1; break ;;
+		esac
+	done
+	[ "$skip" -eq 1 ] && continue
+
+	sw=$SPACE_WARN; sc=$SPACE_CRIT; iw=$INODE_WARN; ic=$INODE_CRIT
+	no_alert=0
+	space_policy="percent"
+	min_free_bytes=0
+	ovr=$(lookup_override "$target")
+	if [ "$ovr" = "NOALERT" ]; then
+		no_alert=1
+		no_alert_count=$((no_alert_count + 1))
+		no_alert_msg+=("$target $(format_capacity "$sp" "$used" "$size" "$available")")
+	elif [[ "$ovr" = MINFREE\ * ]]; then
+		min_free_value=${ovr#MINFREE }
+		if ! min_free_bytes=$(parse_size_bytes "$min_free_value"); then
+			echo "DISKS UNKNOWN - invalid MINFREE size '$min_free_value' for $target"
+			exit 3
+		fi
+		space_policy="minfree"
+		min_free_count=$((min_free_count + 1))
+	elif [ -n "$ovr" ]; then
+		read -r sw sc iw ic <<<"$ovr"
+	fi
+
+	checked=$((checked + 1))
+
+	# space
+	if [ "$no_alert" -eq 0 ]; then
+		if [ "$sp" -gt "$highest_space_pct" ]; then
+			highest_space_pct=$sp
+			highest_space_target=$target
+			highest_space_size=$size
+			highest_space_used=$used
+			highest_space_available=$available
+		fi
+		if [ "$space_policy" = "minfree" ]; then
+			if [ "$available" -lt "$min_free_bytes" ]; then
+				crit_msg+=("$target free $(human_bytes "$available") < minimum $(human_bytes "$min_free_bytes") ($(format_capacity "$sp" "$used" "$size" "$available"))")
+				[ "$worst" -lt 2 ] && worst=2
+			else
+				min_free_msg+=("$target $(format_capacity "$sp" "$used" "$size" "$available"), minimum $(human_bytes "$min_free_bytes") free")
+			fi
+			perfdata+=("'${target}'=${sp}%;;;0;100")
+		else
+			if [ "$sp" -ge "$sc" ]; then
+				crit_msg+=("$target space $(format_capacity "$sp" "$used" "$size" "$available") >= ${sc}%")
+				[ "$worst" -lt 2 ] && worst=2
+			elif [ "$sp" -ge "$sw" ]; then
+				warn_msg+=("$target space $(format_capacity "$sp" "$used" "$size" "$available") >= ${sw}%")
+				[ "$worst" -lt 1 ] && worst=1
+			fi
+			perfdata+=("'${target}'=${sp}%;${sw};${sc};0;100")
+		fi
+	else
+		perfdata+=("'${target}'=${sp}%;;;0;100")
+	fi
+
+	# inodes (skip filesystems that report none, e.g. vfat)
+	if [ "$ip" = "-" ] || [ -z "$ip" ]; then
+		perfdata+=("'${target}_inode'=U")
+	elif [ "$no_alert" -eq 1 ]; then
+		perfdata+=("'${target}_inode'=${ip}%;;;0;100")
+	else
+		if [ "$ip" -ge "$ic" ]; then
+			crit_msg+=("$target inode ${ip}% >= ${ic}%")
+			[ "$worst" -lt 2 ] && worst=2
+		elif [ "$ip" -ge "$iw" ]; then
+			warn_msg+=("$target inode ${ip}% >= ${iw}%")
+			[ "$worst" -lt 1 ] && worst=1
+		fi
+		perfdata+=("'${target}_inode'=${ip}%;${iw};${ic};0;100")
+	fi
+done < <(LC_ALL=C df -B1 --output=fstype,size,used,avail,pcent,ipcent,target 2>/dev/null)
+
+if [ "$checked" -eq 0 ]; then
+	echo "DISKS UNKNOWN - no filesystems discovered"
+	exit 3
+fi
+
+# ${arr[@]+"${arr[@]}"} expands to nothing (not an error) on an empty array
+# under set -u, and to the quoted elements otherwise - portable to old bash.
+case "$worst" in
+	0) label="OK"
+	   summary="${checked} filesystem(s) within thresholds"
+	   if [ "$highest_space_pct" -ge 0 ]; then
+		   summary="$summary; highest: $highest_space_target $(format_capacity \
+			   "$highest_space_pct" "$highest_space_used" "$highest_space_size" \
+			   "$highest_space_available")"
+	   fi ;;
+	1) label="WARNING";  summary=$(join_by ', ' ${warn_msg[@]+"${warn_msg[@]}"}) ;;
+	2) label="CRITICAL"; summary=$(join_by ', ' ${crit_msg[@]+"${crit_msg[@]}"})
+	   warn_extra=$(join_by ', ' ${warn_msg[@]+"${warn_msg[@]}"})
+	   [ -n "$warn_extra" ] && summary="$summary; also $warn_extra" ;;
+esac
+
+[ "$no_alert_count" -gt 0 ] && \
+	summary="$summary; NOALERT: $(join_by ', ' ${no_alert_msg[@]+"${no_alert_msg[@]}"})"
+[ "$min_free_count" -gt 0 ] && [ "${#min_free_msg[@]}" -gt 0 ] && \
+	summary="$summary; MINFREE: $(join_by ', ' "${min_free_msg[@]}")"
+
+printf 'DISKS %s - %s | %s\n' "$label" "$summary" \
+	"$(join_by ' ' ${perfdata[@]+"${perfdata[@]}"})"
+exit "$worst"

@@ -13,12 +13,14 @@ z dokumentacji.
 | [`docs/power-probe.md`](docs/power-probe.md) | Co który interfejs mierzy, na jakim sprzęcie działa, i czego nie da się odczytać. |
 | [`tests/`](tests/) | Testy jednostkowe, uruchamiane bez dostępu do sprzętu. |
 | [`terraform/`](terraform/) | Lab KVM opisany w Terraform: jedenaście maszyn (Debian, Ubuntu, pulpit, Proxmox Backup Server, k3s, Docker) w trzech warstwach, z cloud-init i poprawkami XML domen. Sprawdzony na Debianie 13 z libvirt 11.3. |
+| [`ansible-pld/`](ansible-pld/) | Playbooki Ansible dla PLD Linux Th z systemd: profil pakietów instalowany przez Poldek, hardening (SSH, sysctl, fail2ban, auditd) i monitoring przez NRPE (Nagios Remote Plugin Executor). Dokumentacja po angielsku. Sprawdzone na PLD Th 3.0. |
 
 ## Wymagania
 
 Skrypty: Python 3.7 lub nowszy, bez zewnętrznych bibliotek. Liczniki RAPL i IPMI
 zwykle wymagają uprawnień roota. Lab: libvirt z KVM oraz Terraform albo OpenTofu -
-szczegóły w [`terraform/README.md`](terraform/README.md).
+szczegóły w [`terraform/README.md`](terraform/README.md). PLD: Ansible z kolekcją
+`community.general` - szczegóły w [`ansible-pld/README.md`](ansible-pld/README.md).
 
 ## Szybki start
 

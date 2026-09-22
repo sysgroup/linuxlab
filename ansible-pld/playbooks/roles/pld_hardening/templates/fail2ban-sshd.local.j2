@@ -1,0 +1,17 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+# {{ ansible_managed }}
+[DEFAULT]
+ignoreip = {{ pld_fail2ban_ignoreip | join(' ') }}
+
+[sshd]
+enabled  = true
+port     = {{ pld_fail2ban_sshd_port }}
+logpath  = {{ pld_fail2ban_sshd_logpath }}
+findtime = {{ pld_fail2ban_sshd_findtime }}
+bantime  = {{ pld_fail2ban_sshd_bantime }}
+maxretry = {{ pld_fail2ban_sshd_maxretry }}
+{% if pld_fail2ban_sshd_bantime_increment | bool %}
+bantime.increment = true
+bantime.maxtime   = {{ pld_fail2ban_sshd_bantime_maxtime }}
+{% endif %}

@@ -1,0 +1,8 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+## {{ ansible_managed }}
+## Replace PLD's 10-no-audit.rules with an explicit base queue policy.
+-D
+-b 8192
+-f 1
+--backlog_wait_time 60000

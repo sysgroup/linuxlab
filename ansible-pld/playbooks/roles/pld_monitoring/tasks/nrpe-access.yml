@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# NRPE access policy is applied only when nrpe_allowed_hosts is nonempty.
+
+- name: "Nrpe access :: detect NRPE configuration"
+  ansible.builtin.stat:
+    path: /etc/nagios/nrpe.cfg
+  register: _nrpe_access_cfg
+
+- name: "Nrpe access :: apply source and listen policy"
+  when:
+    - _nrpe_access_cfg.stat.exists | default(false)
+    - nrpe_allowed_hosts | length > 0
+  block:
+    # A specific bind address may appear after the service starts. Enable the
+    # restart drop-in by default; set nrpe_bind_wait_for_address: false only
+    # when another unit already provides this guarantee.
+    - name: "Nrpe access :: decide whether the start must wait for the address"
+      ansible.builtin.set_fact:
+        _nrpe_wait_for_address: >-
+          {{ nrpe_bind_wait_for_address
+             | default(nrpe_bind_address | default('') | length > 0)
+             | bool }}
+
+    - name: "Nrpe access :: validate inventory"
+      ansible.builtin.assert:
+        that:
+          - >-
+            nrpe_allowed_hosts
+            | select('match', '^[0-9]{1,3}([.][0-9]{1,3}){3}$')
+            | list | length == nrpe_allowed_hosts | length
+          - >-
+            nrpe_bind_address | default('') | length == 0
+            or nrpe_bind_address is match('^[0-9]{1,3}([.][0-9]{1,3}){3}$')
+        fail_msg: >-
+          {{ inventory_hostname }}: nrpe_allowed_hosts must be a list of IPv4
+          addresses for monitoring servers visible to this host, and
+          nrpe_bind_address must be a single IPv4 address.
+
+    # Use an nrpe.d drop-in so the vendor configuration remains untouched.
+    - name: "Nrpe access :: restrict source addresses"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/allowed_hosts.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (roles/pld_monitoring/tasks/nrpe-access.yml). Do not edit.
+          allowed_hosts={{ nrpe_allowed_hosts | join(',') }}
+      register: _nrpe_access_allowed
+
+    # Another allowed_hosts drop-in could override the managed policy.
+    - name: "Nrpe access :: find stale allowed_hosts fragments"
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        grep -rls '^allowed_hosts' /etc/nagios/nrpe.d/ 2>/dev/null
+        | grep -v '^/etc/nagios/nrpe.d/allowed_hosts.cfg$' || true
+      args:
+        executable: /bin/bash
+      register: _nrpe_access_stale
+      changed_when: false
+
+    - name: "Nrpe access :: remove stale allowed_hosts fragments"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ _nrpe_access_stale.stdout_lines | default([]) }}"
+      register: _nrpe_access_stale_removed
+
+    - name: "Nrpe access :: listen only on the declared address"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/server_address.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (roles/pld_monitoring/tasks/nrpe-access.yml). Do not edit.
+          server_address={{ nrpe_bind_address }}
+      when: nrpe_bind_address | default('') | length > 0
+      register: _nrpe_access_bind
+
+    # The drop-in waits for network-online and retries a failed bind.
+    - name: "Nrpe access :: drop-in directory"
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ nrpe_service_name }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: _nrpe_wait_for_address | bool
+
+    - name: "Nrpe access :: wait for the address before starting"
+      ansible.builtin.template:
+        src: nrpe-bind-dropin.conf.j2
+        dest: "/etc/systemd/system/{{ nrpe_service_name }}.service.d/10-bind-address.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      when: _nrpe_wait_for_address | bool
+      register: _nrpe_access_dropin
+
+    - name: "Nrpe access :: remove the wait drop-in when not requested"
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ nrpe_service_name }}.service.d/10-bind-address.conf"
+        state: absent
+      when: not (_nrpe_wait_for_address | bool)
+      register: _nrpe_access_dropin_absent
+
+    # Removing the bind setting restores the package default listener.
+    - name: "Nrpe access :: remove bind configuration when not declared"
+      ansible.builtin.file:
+        path: /etc/nagios/nrpe.d/server_address.cfg
+        state: absent
+      when: nrpe_bind_address | default('') | length == 0
+      register: _nrpe_access_bind_absent
+
+    - name: "Nrpe access :: apply"
+      ansible.builtin.systemd:
+        name: "{{ nrpe_service_name }}"
+        state: >-
+          {{ 'restarted'
+             if (_nrpe_access_allowed is changed or _nrpe_access_bind is changed
+                 or _nrpe_access_dropin is changed or _nrpe_access_bind_absent is changed
+                 or _nrpe_access_dropin_absent is changed
+                 or _nrpe_access_stale_removed is changed)
+             else 'started' }}
+        enabled: true
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    # Verify the effective listener, not just the rendered files.
+    - name: "Nrpe access :: read the effective listening socket"
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        ss -tlnH | awk '{print $4}' | grep -E ':{{ nrpe_port | default(5666) }}$' | tr '\n' ' '
+      args:
+        executable: /bin/bash
+      register: _nrpe_access_socket
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: "Nrpe access :: verify the effective listening socket"
+      ansible.builtin.assert:
+        that:
+          - >-
+            _nrpe_access_socket.stdout | default('') | trim
+            == nrpe_bind_address ~ ':' ~ (nrpe_port | default(5666))
+        fail_msg: >-
+          {{ inventory_hostname }}: NRPE listens on
+          "{{ _nrpe_access_socket.stdout | default('') | trim }}", but it was
+          expected to listen on {{ nrpe_bind_address }}:{{ nrpe_port | default(5666) }}.
+          Check whether the address exists on an interface (`ip -4 -br addr`).
+      when:
+        - not ansible_check_mode
+        - nrpe_bind_address | default('') | length > 0

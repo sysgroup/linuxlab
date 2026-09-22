@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Account used for Ansible hardening runs. Create it with sudo access first.
+pld_admin_user: pld-admin
+
+# Files that an earlier version of this role wrote under other names. After
+# its own file is in place, each component removes the entries that lie in its
+# directory, so that an old copy can neither duplicate nor silently override
+# the managed one (fail2ban and sshd read these directories in name order).
+# Allowed: files directly in /etc/ssh/sshd_config.d, /etc/sysctl.d,
+# /etc/fail2ban/jail.d or /etc/audit/rules.d that this role does not manage.
+pld_hardening_legacy_files: []
+
+# Packages are installed with poldek only when missing.
+pld_hardening_packages:
+  - openssh-server
+  - fail2ban
+  - audit
+pld_hardening_package_components:
+  openssh-server: sshd
+  fail2ban: fail2ban
+  audit: auditd
+
+# This role does not manage AllowUsers: additive rules can lock out accounts.
+pld_sshd_service_name: sshd
+pld_sshd_permit_root_login: "no"
+pld_sshd_password_authentication: "no"
+pld_sshd_kbd_interactive_authentication: "no"
+pld_sshd_pubkey_authentication: "yes"
+pld_sshd_log_level: VERBOSE
+pld_sshd_max_auth_tries: 3
+pld_sshd_login_grace_time: 30
+pld_sshd_max_startups: "10:30:60"
+pld_sshd_max_sessions: 10
+pld_sshd_client_alive_interval: 300
+pld_sshd_client_alive_count_max: 2
+pld_sshd_tcp_keepalive: "no"
+pld_sshd_allow_tcp_forwarding: "no"
+pld_sshd_allow_agent_forwarding: "no"
+pld_sshd_x11_forwarding: "no"
+pld_sshd_gateway_ports: "no"
+pld_sshd_permit_tunnel: "no"
+pld_sshd_permit_user_environment: "no"
+pld_sshd_gssapi_authentication: "no"
+pld_sshd_use_dns: "no"
+
+# Kernel/network baseline. IP forwarding is deliberately not managed: changing
+# routing is a separate operational decision.
+pld_sysctl_hardening:
+  kernel.kptr_restrict: 2
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1
+  kernel.sysrq: 0
+  kernel.unprivileged_bpf_disabled: 2
+  kernel.perf_event_paranoid: 3
+  vm.unprivileged_userfaultfd: 0
+  fs.protected_hardlinks: 1
+  fs.protected_symlinks: 1
+  fs.protected_fifos: 2
+  fs.protected_regular: 2
+  fs.suid_dumpable: 0
+  net.core.bpf_jit_harden: 2
+  net.ipv4.conf.all.rp_filter: 1
+  net.ipv4.conf.default.rp_filter: 1
+  net.ipv4.conf.all.accept_redirects: 0
+  net.ipv4.conf.default.accept_redirects: 0
+  net.ipv4.conf.all.secure_redirects: 0
+  net.ipv4.conf.default.secure_redirects: 0
+  net.ipv4.conf.all.send_redirects: 0
+  net.ipv4.conf.default.send_redirects: 0
+  net.ipv4.conf.all.accept_source_route: 0
+  net.ipv4.conf.default.accept_source_route: 0
+  net.ipv4.conf.all.log_martians: 1
+  net.ipv4.conf.default.log_martians: 1
+  net.ipv4.icmp_echo_ignore_broadcasts: 1
+  net.ipv4.icmp_ignore_bogus_error_responses: 1
+  net.ipv4.tcp_syncookies: 1
+  net.ipv4.tcp_rfc1337: 1
+  net.ipv6.conf.all.accept_redirects: 0
+  net.ipv6.conf.default.accept_redirects: 0
+  net.ipv6.conf.all.accept_source_route: 0
+  net.ipv6.conf.default.accept_source_route: 0
+
+# fail2ban. Reload is used instead of restart so active bans survive.
+pld_fail2ban_service_name: fail2ban
+pld_fail2ban_sshd_port: ssh
+pld_fail2ban_sshd_logpath: "%(sshd_log)s"
+pld_fail2ban_sshd_findtime: 5h
+pld_fail2ban_sshd_bantime: 2w
+pld_fail2ban_sshd_maxretry: 2
+pld_fail2ban_sshd_bantime_increment: true
+pld_fail2ban_sshd_bantime_maxtime: 8w
+pld_fail2ban_ignoreip: >-
+  {{ fail2ban_ignoreip | default(['127.0.0.1/8', '::1']) }}
+
+# auditd. Keep rules mutable by default so Ansible can update them without a
+# reboot. Set true only after accepting that further changes require reboot.
+pld_auditd_service_name: auditd
+pld_auditd_immutable: false
+pld_auditd_max_log_file: 32
+pld_auditd_num_logs: 5
+pld_auditd_max_log_file_action: ROTATE
+pld_auditd_space_left_action: SYSLOG
+pld_auditd_admin_space_left_action: SYSLOG
+pld_auditd_disk_full_action: SYSLOG

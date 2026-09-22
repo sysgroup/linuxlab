@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Base provisioning (PLD Linux)
+  hosts: "{{ target_hosts | mandatory }}"
+  become: true
+  tasks:
+    - name: PLD base package profile
+      ansible.builtin.import_role:
+        name: pld_base
+      tags: [packages, pld-packages]
+
+    - name: Configure timezone
+      community.general.timezone:
+        name: "{{ pld_timezone }}"
+      when: pld_timezone | default('') | length > 0
+      tags: [timezone]
+
+    - name: Local maintenance helpers (proc_stash snapshots + retention)
+      ansible.builtin.import_role:
+        name: pld_maintenance
+      tags: [maintenance]
+
+...

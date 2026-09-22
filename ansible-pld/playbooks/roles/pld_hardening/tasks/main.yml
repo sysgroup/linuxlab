@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Pld_hardening :: assert PLD Linux"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == "PLD Linux"
+      - ansible_facts['distribution_release'] == "Th"
+      - ansible_facts['service_mgr'] == "systemd"
+    fail_msg: >-
+      pld_hardening supports PLD Linux Th with systemd only; got
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+      ({{ ansible_facts['service_mgr'] }})
+    quiet: true
+  tags: [always]
+
+- name: "Pld_hardening :: assert managed admin login"
+  ansible.builtin.assert:
+    that:
+      - ansible_user != "root"
+      - ansible_user == pld_admin_user
+    fail_msg: >-
+      Run PLD hardening through the managed {{ pld_admin_user }} account, not root.
+      Current ansible_user={{ ansible_user }}
+    quiet: true
+  tags: [always]
+
+- name: "Pld_hardening :: validate legacy file list"
+  vars:
+    _pld_hardening_managed_files:
+      - /etc/ssh/sshd_config.d/00-pld-hardening.conf
+      - /etc/sysctl.d/60-pld-hardening.conf
+      - /etc/fail2ban/jail.d/99-pld-hardening.local
+      - /etc/audit/rules.d/10-pld-base.rules
+      - /etc/audit/rules.d/30-pld-hardening.rules
+      - /etc/audit/rules.d/99-pld-finalize.rules
+  ansible.builtin.assert:
+    that:
+      # One plain file name directly in a component directory; a leading dot
+      # is rejected, so "." and ".." can never reach the file module.
+      - item is match('^/etc/(ssh/sshd_config[.]d|sysctl[.]d|fail2ban/jail[.]d|audit/rules[.]d)/[A-Za-z0-9_][A-Za-z0-9_.-]*$')
+      - item not in _pld_hardening_managed_files
+    fail_msg: >-
+      pld_hardening_legacy_files accepts only an unmanaged file directly in
+      /etc/ssh/sshd_config.d, /etc/sysctl.d, /etc/fail2ban/jail.d or
+      /etc/audit/rules.d; got {{ item }}
+    quiet: true
+  loop: "{{ pld_hardening_legacy_files }}"
+  tags: [always]
+
+- name: PLD packages
+  ansible.builtin.import_tasks: packages.yml
+  # Component tags include their package preflight/dependency path, so a
+  # partial run remains self-contained.
+  tags: [packages, sshd, sysctl, fail2ban, auditd, verify]
+
+- name: PLD SSH hardening
+  ansible.builtin.import_tasks: sshd.yml
+  tags: [sshd]
+
+- name: PLD sysctl hardening
+  ansible.builtin.import_tasks: sysctl.yml
+  tags: [sysctl]
+
+- name: PLD fail2ban hardening
+  ansible.builtin.import_tasks: fail2ban.yml
+  tags: [fail2ban]
+
+- name: PLD auditd hardening
+  ansible.builtin.import_tasks: auditd.yml
+  tags: [auditd]
+
+- name: Verify effective hardening
+  ansible.builtin.import_tasks: verify.yml
+  tags: [verify]

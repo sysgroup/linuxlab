@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Reload PLD sshd
+  ansible.builtin.systemd:
+    name: "{{ pld_sshd_service_name }}"
+    state: reloaded
+
+- name: Reload PLD hardening sysctl
+  ansible.builtin.command: sysctl --load /etc/sysctl.d/60-pld-hardening.conf
+  changed_when: true
+
+- name: Reload PLD fail2ban
+  ansible.builtin.command: fail2ban-client reload
+  changed_when: true
+
+- name: Load PLD audit rules
+  ansible.builtin.command: /sbin/augenrules --load
+  changed_when: true
+
+- name: Reload PLD auditd config
+  ansible.builtin.command: systemctl kill -s HUP auditd
+  changed_when: true

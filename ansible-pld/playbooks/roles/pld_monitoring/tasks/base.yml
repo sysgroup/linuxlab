@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Local load and memory plugins provide stable semantics across plugin versions.
+
+- name: "Nrpe base tuning :: detect plugins directory"
+  ansible.builtin.stat:
+    path: /usr/lib/nagios/plugins
+  register: _nrpe_base_plugins_dir
+
+- name: "Nrpe base tuning :: deploy when NRPE is present"
+  when: _nrpe_base_plugins_dir.stat.exists | default(false)
+  vars:
+    _load_warning: "{{ nrpe_load_warning_per_cpu | default('2.0,1.5,1.0') }}"
+    _load_critical: "{{ nrpe_load_critical_per_cpu | default('4.0,3.0,2.0') }}"
+    _memory_warning: "{{ nrpe_memory_warning_available_pct | default(15) }}"
+    _memory_critical: "{{ nrpe_memory_critical_available_pct | default(8) }}"
+    _users_warning: "{{ nrpe_users_warning | default(5) }}"
+    _users_critical: "{{ nrpe_users_critical | default(10) }}"
+    _processes_warning: "{{ nrpe_processes_warning | default(2000) }}"
+    _processes_critical: "{{ nrpe_processes_critical | default(3000) }}"
+    _monitoring_hostname: >-
+      {{ nrpe_monitoring_hostname |
+         default(monitoring_id | default(inventory_hostname_short)) }}
+  block:
+    - name: "Nrpe base tuning :: validate monitoring hostname"
+      ansible.builtin.assert:
+        that:
+          - _monitoring_hostname is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Unsafe monitoring hostname: {{ _monitoring_hostname }}"
+
+    - name: "Nrpe base tuning :: install load and memory plugins"
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/usr/lib/nagios/plugins/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - check_load_per_cpu
+        - check_memory_available
+      register: _nrpe_base_plugins
+
+    - name: "Nrpe base tuning :: load command"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_load.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          command[check_load]=/usr/lib/nagios/plugins/check_load_per_cpu --warning {{ _load_warning }} --critical {{ _load_critical }} --hostname {{ _monitoring_hostname }}
+      register: _nrpe_base_load_cfg
+
+    - name: "Nrpe base tuning :: memory command"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_memory.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          command[check_memory]=/usr/lib/nagios/plugins/check_memory_available --warning-available {{ _memory_warning }} --critical-available {{ _memory_critical }} --hostname {{ _monitoring_hostname }}
+      register: _nrpe_base_memory_cfg
+
+    - name: "Nrpe base tuning :: optional logged-user command"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_users.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          command[check_users]=/usr/lib/nagios/plugins/check_users -w {{ _users_warning }} -c {{ _users_critical }}
+      register: _nrpe_base_users_cfg
+
+    - name: "Nrpe base tuning :: optional process-count command"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_proc_total.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          command[check_procs_total]=/usr/lib/nagios/plugins/check_procs -w {{ _processes_warning }} -c {{ _processes_critical }}
+      register: _nrpe_base_processes_cfg
+
+    - name: "Nrpe base tuning :: restart NRPE after a change"
+      ansible.builtin.systemd:
+        name: "{{ nrpe_service_name }}"
+        state: restarted
+      when:
+        - nrpe_base_checks_restart | default(true) | bool
+        - >-
+          _nrpe_base_plugins is changed or
+          _nrpe_base_load_cfg is changed or
+          _nrpe_base_memory_cfg is changed or
+          _nrpe_base_users_cfg is changed or
+          _nrpe_base_processes_cfg is changed
+
+    - name: "Nrpe base tuning :: verify custom plugins"
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - - /usr/lib/nagios/plugins/check_load_per_cpu
+          - --warning
+          - "{{ _load_warning }}"
+          - --critical
+          - "{{ _load_critical }}"
+          - --hostname
+          - "{{ _monitoring_hostname }}"
+        - - /usr/lib/nagios/plugins/check_memory_available
+          - --warning-available
+          - "{{ _memory_warning }}"
+          - --critical-available
+          - "{{ _memory_critical }}"
+          - --hostname
+          - "{{ _monitoring_hostname }}"
+      register: _nrpe_base_checks
+      changed_when: false
+      failed_when: _nrpe_base_checks.rc not in [0, 1, 2]
+      when: not ansible_check_mode
+
+    - name: "Nrpe base tuning :: show verification output"
+      ansible.builtin.debug:
+        msg: "{{ _nrpe_base_checks.results | map(attribute='stdout') | list }}"
+      when: not ansible_check_mode
+
+...

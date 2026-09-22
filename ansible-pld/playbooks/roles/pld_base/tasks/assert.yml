@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "PLD base :: assert supported platform"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == "PLD Linux"
+      - ansible_facts['distribution_release'] == "Th"
+      - ansible_facts['service_mgr'] == "systemd"
+    fail_msg: >-
+      pld_base supports PLD Linux Th with systemd only; got
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+      ({{ ansible_facts['service_mgr'] }}).
+    quiet: true
+  tags: [always]

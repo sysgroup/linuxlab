@@ -1,0 +1,74 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# Refresh the cached update list used by check_poldek_updates. This script never
+# installs packages: --dumpn asks Poldek to write package names instead.
+set -u
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+state_dir=/var/lib/nagios/poldek-monitoring
+timeout_seconds="${POLDEK_TIMEOUT_SECONDS:-600}"
+lock_file="$state_dir/refresh.lock"
+status_file="$state_dir/status"
+updates_file="$state_dir/updates"
+log_file="$state_dir/refresh.log"
+
+exec 9>"$lock_file"
+if ! flock -n 9; then
+    exit 0
+fi
+
+work_dir=$(mktemp -d "$state_dir/.refresh.XXXXXX") || exit 1
+trap 'rm -rf "$work_dir"' EXIT
+
+write_status() {
+    local result="$1"
+    local count="$2"
+    local reason="$3"
+    local temporary="$work_dir/status"
+    {
+        printf 'timestamp=%s\n' "$(date +%s)"
+        printf 'status=%s\n' "$result"
+        printf 'count=%s\n' "$count"
+        printf 'reason=%s\n' "$reason"
+    } >"$temporary"
+    chown root:nagios "$temporary"
+    chmod 0640 "$temporary"
+    mv -f "$temporary" "$status_file"
+}
+
+if ! timeout "$timeout_seconds" poldek --up >"$work_dir/update.log" 2>&1; then
+    cp -f "$work_dir/update.log" "$log_file"
+    chmod 0640 "$log_file"
+    write_status error 0 repository_refresh_failed
+    exit 1
+fi
+
+if ! timeout "$timeout_seconds" poldek --upgrade-dist --dumpn="$work_dir/updates.raw" >"$work_dir/dump.log" 2>&1; then
+    {
+        cat "$work_dir/update.log"
+        cat "$work_dir/dump.log"
+    } >"$log_file"
+    chmod 0640 "$log_file"
+    write_status error 0 update_resolution_failed
+    exit 1
+fi
+
+touch "$work_dir/updates.raw"
+sed '/^[[:space:]]*$/d; /^[[:space:]]*#/d' "$work_dir/updates.raw" \
+    | sort -u >"$work_dir/updates"
+count=$(wc -l <"$work_dir/updates")
+count=${count//[[:space:]]/}
+
+chown root:nagios "$work_dir/updates"
+chmod 0640 "$work_dir/updates"
+mv -f "$work_dir/updates" "$updates_file"
+{
+    cat "$work_dir/update.log"
+    cat "$work_dir/dump.log"
+} >"$log_file"
+chown root:nagios "$log_file"
+chmod 0640 "$log_file"
+write_status ok "$count" none

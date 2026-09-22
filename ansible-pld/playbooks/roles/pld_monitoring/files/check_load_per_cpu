@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+"""Nagios plugin for CPU-count-normalized Linux load averages."""
+
+import argparse
+import os
+import socket
+
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+
+def finish(code, message, loads=None):
+    perfdata = ""
+    if loads is not None:
+        perfdata = " | " + " ".join(
+            f"load{period}={value:.2f}" for period, value in zip((1, 5, 15), loads)
+        )
+    print(f"{message}{perfdata}")
+    raise SystemExit(code)
+
+
+def thresholds(value):
+    try:
+        parsed = tuple(float(item) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("thresholds must be three comma-separated numbers") from exc
+    if len(parsed) != 3 or any(item <= 0 for item in parsed):
+        raise argparse.ArgumentTypeError("thresholds must be three positive numbers")
+    return parsed
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Check load averages normalized by logical CPU count")
+    parser.add_argument("--warning", type=thresholds, default=thresholds("2.0,1.5,1.0"))
+    parser.add_argument("--critical", type=thresholds, default=thresholds("4.0,3.0,2.0"))
+    parser.add_argument("--loadavg-file", default="/proc/loadavg", help=argparse.SUPPRESS)
+    parser.add_argument("--cpu-count", type=int, default=os.cpu_count(), help=argparse.SUPPRESS)
+    parser.add_argument("--hostname", default=socket.gethostname(), help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    if not args.cpu_count or args.cpu_count < 1:
+        finish(UNKNOWN, f"LOAD UNKNOWN - server {args.hostname}: cannot determine CPU count")
+    if any(warn >= crit for warn, crit in zip(args.warning, args.critical)):
+        finish(UNKNOWN, "LOAD UNKNOWN - every warning threshold must be below critical")
+
+    try:
+        with open(args.loadavg_file, "r", encoding="utf-8") as handle:
+            loads = tuple(float(item) for item in handle.read().split()[:3])
+        if len(loads) != 3:
+            raise ValueError("three load averages not found")
+    except (OSError, ValueError) as exc:
+        finish(UNKNOWN, f"LOAD UNKNOWN - server {args.hostname}: {exc}")
+
+    normalized = tuple(value / args.cpu_count for value in loads)
+    details = ", ".join(
+        f"{period}m={raw:.2f} ({ratio:.2f}/CPU)"
+        for period, raw, ratio in zip((1, 5, 15), loads, normalized)
+    )
+
+    if any(value >= limit for value, limit in zip(normalized, args.critical)):
+        finish(
+            CRITICAL,
+            f"LOAD CRITICAL - server {args.hostname}: {details}; CPUs={args.cpu_count}",
+            loads,
+        )
+    if any(value >= limit for value, limit in zip(normalized, args.warning)):
+        finish(
+            WARNING,
+            f"LOAD WARNING - server {args.hostname}: {details}; CPUs={args.cpu_count}",
+            loads,
+        )
+    finish(OK, f"LOAD OK - server {args.hostname}: {details}; CPUs={args.cpu_count}", loads)
+
+
+if __name__ == "__main__":
+    main()

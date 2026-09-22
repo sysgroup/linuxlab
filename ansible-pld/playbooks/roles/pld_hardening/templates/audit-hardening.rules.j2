@@ -1,0 +1,25 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+## {{ ansible_managed }}
+## Supplemental rules; base reset/queue settings are managed separately.
+
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d -p wa -k scope
+-w /etc/ssh -p wa -k sshd
+-w /etc/fail2ban -p wa -k fail2ban
+-w /etc/sysctl.conf -p wa -k sysctl
+-w /etc/sysctl.d -p wa -k sysctl
+-w /etc/crontab -p wa -k cron
+-w /etc/cron.d -p wa -k cron
+-w /var/run/utmp -p wa -k session
+-w /var/log/wtmp -p wa -k session
+-w /var/log/btmp -p wa -k session
+-w /etc/localtime -p wa -k time-change
+-a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time-change
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+-a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k privileged-exec

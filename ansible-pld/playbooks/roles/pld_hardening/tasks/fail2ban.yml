@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Fail2ban :: validate candidate in an isolated config copy"
+  block:
+    - name: "Fail2ban :: reset validation directory"
+      ansible.builtin.file:
+        path: /run/pld-fail2ban-validation
+        state: absent
+      check_mode: false
+      changed_when: false
+
+    - name: "Fail2ban :: create validation directory"
+      ansible.builtin.file:
+        path: /run/pld-fail2ban-validation
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      check_mode: false
+      changed_when: false
+
+    - name: "Fail2ban :: copy current configuration for validation"
+      ansible.builtin.command:
+        argv:
+          - cp
+          - --archive
+          - /etc/fail2ban/.
+          - /run/pld-fail2ban-validation/
+      check_mode: false
+      changed_when: false
+
+    - name: "Fail2ban :: render candidate in validation copy"
+      ansible.builtin.template:
+        src: fail2ban-sshd.local.j2
+        dest: /run/pld-fail2ban-validation/jail.d/99-pld-hardening.local
+        owner: root
+        group: root
+        mode: "0640"
+      check_mode: false
+      changed_when: false
+
+    - name: "Fail2ban :: test isolated candidate"
+      ansible.builtin.command: >-
+        fail2ban-client -c /run/pld-fail2ban-validation -t
+      changed_when: false
+      check_mode: false
+  always:
+    - name: "Fail2ban :: remove validation directory"
+      ansible.builtin.file:
+        path: /run/pld-fail2ban-validation
+        state: absent
+      check_mode: false
+      changed_when: false
+
+- name: "Fail2ban :: inspect existing managed jail"
+  ansible.builtin.stat:
+    path: /etc/fail2ban/jail.d/99-pld-hardening.local
+  register: _pld_f2b_jail_stat
+
+- name: "Fail2ban :: preserve existing managed jail for rollback"
+  ansible.builtin.slurp:
+    path: /etc/fail2ban/jail.d/99-pld-hardening.local
+  register: _pld_f2b_jail_previous
+  when: _pld_f2b_jail_stat.stat.exists
+
+- name: "Fail2ban :: deploy and validate SSH jail"
+  block:
+    - name: "Fail2ban :: deploy late SSH jail override"
+      ansible.builtin.template:
+        src: fail2ban-sshd.local.j2
+        dest: /etc/fail2ban/jail.d/99-pld-hardening.local
+        owner: root
+        group: root
+        mode: "0640"
+      register: _pld_f2b_jail
+      notify: Reload PLD fail2ban
+
+    - name: "Fail2ban :: validate complete configuration"
+      ansible.builtin.command: fail2ban-client -t
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - _pld_f2b_jail is changed
+  rescue:
+    - name: "Fail2ban :: restore previous managed jail"
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/99-pld-hardening.local
+        content: "{{ _pld_f2b_jail_previous.content | b64decode }}"
+        owner: root
+        group: root
+        mode: "0640"
+      when: _pld_f2b_jail_stat.stat.exists
+
+    - name: "Fail2ban :: remove invalid new jail when no previous file existed"
+      ansible.builtin.file:
+        path: /etc/fail2ban/jail.d/99-pld-hardening.local
+        state: absent
+      when: not _pld_f2b_jail_stat.stat.exists
+
+    - name: "Fail2ban :: stop after restoring valid configuration"
+      ansible.builtin.fail:
+        msg: >-
+          fail2ban rejected 99-pld-hardening.local; the previous state was
+          restored and fail2ban was not reloaded
+
+# Runs after the managed jail passed validation. A file read later in name
+# order would otherwise override every value of the managed jail.
+- name: "Fail2ban :: remove jail overrides left by an earlier version of this role"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ pld_hardening_legacy_files | select('match', '^/etc/fail2ban/jail[.]d/') | list }}"
+  notify: Reload PLD fail2ban
+
+- name: "Fail2ban :: service enabled and running"
+  ansible.builtin.systemd:
+    name: "{{ pld_fail2ban_service_name }}"
+    enabled: true
+    state: started
+
+- name: "Fail2ban :: apply pending reload before verification"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Fail2ban :: verify SSH jail is live"
+  ansible.builtin.command: fail2ban-client status sshd
+  changed_when: false
+  when: not ansible_check_mode

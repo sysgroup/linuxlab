@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Install proc stash helper
+  ansible.builtin.copy:
+    src: proc_stash.sh
+    dest: "{{ pld_maintenance_sysadmin_dir }}/proc_stash.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+# systemd timers prevent overlapping snapshots and expose failures through
+# unit status and journald. Per-command timeouts are backed by TimeoutStartSec.
+- name: Install proc stash systemd units
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: proc-stash.service
+      content: |
+        [Unit]
+        Description=System snapshot for post-incident analysis
+        Documentation=file://{{ pld_maintenance_sysadmin_dir }}/proc_stash.sh
+
+        [Service]
+        Type=oneshot
+        ExecStart={{ pld_maintenance_sysadmin_dir }}/proc_stash.sh
+        Nice=19
+        IOSchedulingClass=idle
+        # Type=oneshot honors TimeoutStartSec; RuntimeMaxSec would not bound the
+        # complete run.
+        TimeoutStartSec=100
+    - name: proc-stash.timer
+      content: |
+        [Unit]
+        Description=Runs proc-stash every 2 minutes
+
+        [Timer]
+        OnCalendar=*:0/2
+        # Keep sampling close to the requested two-minute cadence.
+        AccuracySec=1s
+        # Avoid synchronized sampling on multiple hosts.
+        RandomizedDelaySec=15
+        # Do not backfill missed snapshots with a misleading timestamp.
+        Persistent=false
+
+        [Install]
+        WantedBy=timers.target
+    - name: proc-stash-cleanup.service
+      content: |
+        [Unit]
+        Description=Proc-stash snapshot retention (30 days)
+
+        [Service]
+        Type=oneshot
+        # -mindepth 1 protects the archive root. -exec ... + groups removals
+        # without shell escaping.
+        ExecStart=/usr/bin/find /var/log/ps/ -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
+        Nice=19
+        IOSchedulingClass=idle
+    - name: proc-stash-cleanup.timer
+      content: |
+        [Unit]
+        Description=Runs proc-stash retention hourly
+
+        [Timer]
+        OnCalendar=hourly
+        RandomizedDelaySec=300
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd manager for proc-stash
+
+- name: Flush handlers so the timers are enabled against reloaded units
+  ansible.builtin.meta: flush_handlers
+
+- name: Explain deferred proc-stash timer activation in check mode
+  ansible.builtin.debug:
+    msg: >-
+      proc-stash unit files are only predicted in check mode, so their systemd
+      activation is deferred until a non-check run after daemon-reload.
+  when: ansible_check_mode
+
+- name: Enable and start the proc stash timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - proc-stash.timer
+    - proc-stash-cleanup.timer
+  # A freshly declared unit does not exist on disk in --check mode.  systemd
+  # would therefore fail before the real run can copy it and reload the
+  # manager.  Skipping activation here preserves a useful, non-mutating
+  # preflight; the normal run above it performs the activation immediately.
+  when: not ansible_check_mode
+
+- name: Install backup timestamp cron job
+  ansible.builtin.copy:
+    dest: /etc/cron.d/crontab-sysadmin-backup-timestamp
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      @hourly root echo `date +\%F` > /var/run/backup_timestamp
+...

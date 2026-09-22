@@ -1,0 +1,8 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+## {{ ansible_managed }}
+{% if pld_auditd_immutable | bool %}
+-e 2
+{% else %}
+-e 1
+{% endif %}

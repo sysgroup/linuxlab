@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Sysctl :: verify every requested kernel key exists"
+  vars:
+    _pld_sysctl_items: "{{ pld_sysctl_hardening | dict2items | sort(attribute='key') }}"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['sysctl', '-n'] + (_pld_sysctl_items | map(attribute='key') | list) }}
+  changed_when: false
+  check_mode: false
+
+- name: "Sysctl :: deploy PLD hardening values"
+  ansible.builtin.template:
+    src: sysctl-hardening.conf.j2
+    dest: /etc/sysctl.d/60-pld-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload PLD hardening sysctl
+
+# The handler loads only the managed file. Values set solely by a removed file
+# stay in the running kernel until the next boot.
+- name: "Sysctl :: remove files left by an earlier version of this role"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ pld_hardening_legacy_files | select('match', '^/etc/sysctl[.]d/') | list }}"
+  notify: Reload PLD hardening sysctl
+
+# A selective `--tags sysctl,verify` run must observe the values just written,
+# rather than leaving the handler queued until after Verify has already read
+# the old runtime state.
+- name: "Sysctl :: apply pending values before verification"
+  ansible.builtin.meta: flush_handlers

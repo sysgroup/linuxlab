@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Copy to inventory/local.yml, then replace every example value.
+all:
+  children:
+    pld:
+      hosts:
+        pld.example.net:
+          ansible_host: 192.0.2.10
+          ansible_user: pld-admin
+          pld_admin_user: pld-admin
+          pld_timezone: UTC
+          pld_base_enable_irqbalance: false
+
+          # Hardening files written earlier under other names; see
+          # docs/pld-hardening.md.
+          # pld_hardening_legacy_files:
+          #   - /etc/fail2ban/jail.d/99-old-hardening.local
+
+          # Set to "yes" only for an intentional SSH jump host.
+          pld_sshd_allow_tcp_forwarding: "no"
+
+          # Configure before applying pld-setup-monitoring.yml.
+          nrpe_allowed_hosts: []
+          # nrpe_bind_address: 192.0.2.10
+          # nrpe_ntp_server: ntp.example.net

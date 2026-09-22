@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Set nrpe_ntp_server in inventory before applying the monitoring playbook.
+nrpe_ntp_command: check_ntp_time
+nrpe_service_name: nrpe
+nrpe_runuser_path: /bin/runuser
+nrpe_allowed_hosts: []

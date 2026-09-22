@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Packages :: start the selected package profile"
+  ansible.builtin.set_fact:
+    _pld_hardening_requested_packages: []
+
+- name: "Packages :: select dependencies for requested hardening components"
+  ansible.builtin.set_fact:
+    _pld_hardening_requested_packages: >-
+      {{ (_pld_hardening_requested_packages + [item]) | unique | sort }}
+  loop: "{{ pld_hardening_packages }}"
+  when: >-
+    'all' in ansible_run_tags
+    or 'hardening' in ansible_run_tags
+    or 'pld-hardening' in ansible_run_tags
+    or 'packages' in ansible_run_tags
+    or pld_hardening_package_components.get(item, 'packages') in ansible_run_tags
+
+- name: "Packages :: install selected hardening RPMs with Poldek"
+  pld_poldek:
+    name: "{{ _pld_hardening_requested_packages }}"
+    state: present
+  register: _pld_hardening_poldek
+  when: _pld_hardening_requested_packages | length > 0
+
+- name: "Packages :: remember whether audit is usable in this run"
+  ansible.builtin.set_fact:
+    _pld_auditd_usable: >-
+      {{ 'audit' not in (_pld_hardening_poldek.missing | default([]))
+         or not ansible_check_mode }}

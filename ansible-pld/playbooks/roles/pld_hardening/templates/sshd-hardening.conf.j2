@@ -1,0 +1,24 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+## {{ ansible_managed }}
+## Loaded before PLD's 50-pld.conf; OpenSSH uses the first global value.
+PermitRootLogin {{ pld_sshd_permit_root_login }}
+PubkeyAuthentication {{ pld_sshd_pubkey_authentication }}
+PasswordAuthentication {{ pld_sshd_password_authentication }}
+KbdInteractiveAuthentication {{ pld_sshd_kbd_interactive_authentication }}
+LogLevel {{ pld_sshd_log_level }}
+MaxAuthTries {{ pld_sshd_max_auth_tries }}
+LoginGraceTime {{ pld_sshd_login_grace_time }}
+MaxStartups {{ pld_sshd_max_startups }}
+MaxSessions {{ pld_sshd_max_sessions }}
+ClientAliveInterval {{ pld_sshd_client_alive_interval }}
+ClientAliveCountMax {{ pld_sshd_client_alive_count_max }}
+TCPKeepAlive {{ pld_sshd_tcp_keepalive }}
+AllowTcpForwarding {{ pld_sshd_allow_tcp_forwarding }}
+AllowAgentForwarding {{ pld_sshd_allow_agent_forwarding }}
+X11Forwarding {{ pld_sshd_x11_forwarding }}
+GatewayPorts {{ pld_sshd_gateway_ports }}
+PermitTunnel {{ pld_sshd_permit_tunnel }}
+PermitUserEnvironment {{ pld_sshd_permit_user_environment }}
+GSSAPIAuthentication {{ pld_sshd_gssapi_authentication }}
+UseDNS {{ pld_sshd_use_dns }}

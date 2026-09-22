@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Packages :: require the Poldek bootstrap"
+  ansible.builtin.stat:
+    path: /usr/bin/poldek
+  register: _pld_base_poldek
+
+- name: "Packages :: assert the Poldek bootstrap"
+  ansible.builtin.assert:
+    that:
+      - _pld_base_poldek.stat.exists
+      - _pld_base_poldek.stat.executable
+    fail_msg: >-
+      pld_base needs /usr/bin/poldek already installed. Bootstrap Poldek before
+      running this role; a package manager cannot install itself.
+    quiet: true
+
+- name: "Packages :: install selected exact RPM names with Poldek"
+  pld_poldek:
+    name: "{{ _pld_base_requested_packages }}"
+    state: present
+  register: _pld_base_poldek_result

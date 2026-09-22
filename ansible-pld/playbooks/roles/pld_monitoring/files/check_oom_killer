@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+"""Nagios plugin that looks for recent Linux OOM-killer events in journald."""
+
+import argparse
+import re
+import shutil
+import socket
+import subprocess
+import time
+
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+OOM_SIGNATURE = re.compile(
+    r"(?:out of memory: killed process|memory cgroup out of memory: killed process|"
+    r"killed process\s+\d+.*(?:total-vm|anon-rss)|invoked oom-killer|oom-kill:)",
+    re.IGNORECASE,
+)
+KILLED_PROCESS = re.compile(r"killed process\s+\d+", re.IGNORECASE)
+
+
+def finish(code, message, event_count=None):
+    perfdata = ""
+    if event_count is not None:
+        perfdata = f" | oom_events={event_count}"
+    print(f"{message}{perfdata}")
+    raise SystemExit(code)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Check recent kernel OOM-killer events")
+    parser.add_argument("--lookback-minutes", type=int, default=60)
+    parser.add_argument("--critical-count", type=int, default=3)
+    parser.add_argument(
+        "--journalctl",
+        default=shutil.which("journalctl") or "/usr/bin/journalctl",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--hostname", default=socket.gethostname(), help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def compact(line, limit=300):
+    value = " ".join(line.split())
+    return value if len(value) <= limit else value[: limit - 3] + "..."
+
+
+def main():
+    args = parse_args()
+    if args.lookback_minutes < 1 or args.critical_count < 1:
+        finish(UNKNOWN, "OOM UNKNOWN - lookback and critical count must be positive")
+
+    since_epoch = int(time.time()) - args.lookback_minutes * 60
+    command = [
+        args.journalctl,
+        "--no-pager",
+        "--quiet",
+        "--output=short-iso",
+        f"--since=@{since_epoch}",
+        "_TRANSPORT=kernel",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        finish(UNKNOWN, f"OOM UNKNOWN - server {args.hostname}: journal query failed: {exc}")
+
+    if result.returncode != 0:
+        error = compact(result.stderr or f"journalctl exit code {result.returncode}")
+        finish(UNKNOWN, f"OOM UNKNOWN - server {args.hostname}: {error}")
+
+    matches = [line for line in result.stdout.splitlines() if OOM_SIGNATURE.search(line)]
+    killed = [line for line in matches if KILLED_PROCESS.search(line)]
+    event_count = len(killed) if killed else (1 if matches else 0)
+
+    if event_count == 0:
+        finish(
+            OK,
+            f"OOM OK - server {args.hostname}: no OOM-killer events "
+            f"in the last {args.lookback_minutes} minutes",
+            0,
+        )
+
+    last_event = compact((killed or matches)[-1])
+    if event_count >= args.critical_count:
+        finish(
+            CRITICAL,
+            f"OOM CRITICAL - server {args.hostname}: {event_count} OOM-killer events "
+            f"in the last {args.lookback_minutes} minutes; last: {last_event}",
+            event_count,
+        )
+
+    finish(
+        WARNING,
+        f"OOM WARNING - server {args.hostname}: {event_count} OOM-killer event "
+        f"in the last {args.lookback_minutes} minutes; last: {last_event}",
+        event_count,
+    )
+
+
+if __name__ == "__main__":
+    main()

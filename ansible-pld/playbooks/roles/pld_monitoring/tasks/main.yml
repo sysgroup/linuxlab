@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Poldek cache check and PLD command cleanup
+  ansible.builtin.import_tasks: poldek.yml
+  tags: [monitoring_poldek]
+
+- name: Load and memory checks
+  ansible.builtin.import_tasks: base.yml
+  tags: [monitoring_base]
+
+- name: PLD-specific base commands
+  ansible.builtin.import_tasks: pld-base-commands.yml
+  tags: [monitoring_base]
+
+- name: Reboot and OOM-killer event checks
+  ansible.builtin.import_tasks: events.yml
+  tags: [monitoring_events]
+
+- name: Systemd unit state checks
+  ansible.builtin.import_tasks: systemd-units.yml
+  tags: [monitoring_systemd]
+
+- name: Disk and inode checks
+  ansible.builtin.import_tasks: disks.yml
+  tags: [monitoring_disks]
+
+- name: NRPE listen address and source restriction
+  ansible.builtin.import_tasks: nrpe-access.yml
+  tags: [monitoring_nrpe_access]
+
+- name: Verify the PLD NRPE command contract
+  ansible.builtin.import_tasks: verify.yml
+  tags: [monitoring_verify]

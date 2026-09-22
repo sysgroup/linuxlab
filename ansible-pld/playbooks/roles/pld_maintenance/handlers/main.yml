@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Reload systemd manager for proc-stash
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not ansible_check_mode

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Apply PLD Linux hardening
+  hosts: "{{ target_hosts | mandatory }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: pld_hardening
+      tags: [hardening, pld-hardening]
+...

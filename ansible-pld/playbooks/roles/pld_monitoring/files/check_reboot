@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+"""Nagios plugin that reports a host reboot by tracking the Linux boot ID.
+
+The alert is kept active for a configurable period after the new boot ID is
+first observed.  This is intentional: a one-shot state change would normally
+disappear before Nagios reached a HARD state and sent a notification.
+"""
+
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import socket
+import sys
+import tempfile
+import time
+
+
+OK = 0
+WARNING = 1
+UNKNOWN = 3
+
+
+def finish(code, message, uptime_seconds=None):
+    perfdata = ""
+    if uptime_seconds is not None:
+        perfdata = f" | uptime_seconds={uptime_seconds}s"
+    print(f"{message}{perfdata}")
+    raise SystemExit(code)
+
+
+def read_text(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read().strip()
+
+
+def boot_time_from_proc_stat(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("btime "):
+                return int(line.split()[1])
+    raise ValueError(f"btime not found in {path}")
+
+
+def iso_local(epoch):
+    return dt.datetime.fromtimestamp(epoch, tz=dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def human_duration(seconds):
+    seconds = max(0, int(seconds))
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if days or hours:
+        parts.append(f"{hours}h")
+    if days or hours or minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def atomic_json_write(path, payload):
+    directory = os.path.dirname(path)
+    fd, temporary = tempfile.mkstemp(prefix=".check_reboot.", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o640)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Detect Linux reboots using /proc boot_id")
+    parser.add_argument("--state-dir", default="/var/lib/nagios/pld-checks")
+    parser.add_argument(
+        "--alert-window",
+        type=int,
+        default=3600,
+        help="seconds to keep WARNING active after detecting a new boot ID",
+    )
+    parser.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id", help=argparse.SUPPRESS)
+    parser.add_argument("--proc-stat", default="/proc/stat", help=argparse.SUPPRESS)
+    parser.add_argument("--hostname", default=socket.gethostname(), help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    if args.alert_window < 60:
+        finish(UNKNOWN, "REBOOT UNKNOWN - --alert-window must be at least 60 seconds")
+
+    try:
+        boot_id = read_text(args.boot_id_file)
+        if not boot_id:
+            raise ValueError("boot_id is empty")
+        boot_epoch = boot_time_from_proc_stat(args.proc_stat)
+    except (OSError, ValueError) as exc:
+        finish(UNKNOWN, f"REBOOT UNKNOWN - server {args.hostname}: cannot read boot data: {exc}")
+
+    now = int(time.time())
+    uptime = max(0, now - boot_epoch)
+    boot_time = iso_local(boot_epoch)
+    state_path = os.path.join(args.state_dir, "check_reboot.json")
+    lock_path = os.path.join(args.state_dir, "check_reboot.lock")
+
+    try:
+        os.makedirs(args.state_dir, mode=0o750, exist_ok=True)
+        with open(lock_path, "a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+
+            if not os.path.exists(state_path):
+                atomic_json_write(
+                    state_path,
+                    {"boot_id": boot_id, "detected_at": 0, "previous_boot_id": None},
+                )
+                finish(
+                    OK,
+                    f"REBOOT OK - server {args.hostname}: baseline initialized; "
+                    f"booted at {boot_time}; uptime {human_duration(uptime)}",
+                    uptime,
+                )
+
+            try:
+                with open(state_path, "r", encoding="utf-8") as state_handle:
+                    state = json.load(state_handle)
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                finish(UNKNOWN, f"REBOOT UNKNOWN - server {args.hostname}: invalid state file: {exc}", uptime)
+
+            if state.get("boot_id") != boot_id:
+                state = {
+                    "boot_id": boot_id,
+                    "detected_at": now,
+                    "previous_boot_id": state.get("boot_id"),
+                }
+                atomic_json_write(state_path, state)
+
+            detected_at = int(state.get("detected_at") or 0)
+            if detected_at and now - detected_at < args.alert_window:
+                finish(
+                    WARNING,
+                    f"REBOOT WARNING - server {args.hostname} restarted; "
+                    f"booted at {boot_time}; detected at {iso_local(detected_at)}; "
+                    f"uptime {human_duration(uptime)}",
+                    uptime,
+                )
+
+            if detected_at:
+                state["detected_at"] = 0
+                atomic_json_write(state_path, state)
+
+    except OSError as exc:
+        finish(UNKNOWN, f"REBOOT UNKNOWN - server {args.hostname}: cannot use state directory: {exc}", uptime)
+
+    finish(
+        OK,
+        f"REBOOT OK - server {args.hostname}: no new reboot; "
+        f"booted at {boot_time}; uptime {human_duration(uptime)}",
+        uptime,
+    )
+
+
+if __name__ == "__main__":
+    main()

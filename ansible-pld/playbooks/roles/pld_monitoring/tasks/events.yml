@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+
+- name: "Nrpe events :: detect plugins directory"
+  ansible.builtin.stat:
+    path: /usr/lib/nagios/plugins
+  register: _nrpe_events_plugins_dir
+
+- name: "Nrpe events :: deploy when NRPE is present"
+  when: _nrpe_events_plugins_dir.stat.exists | default(false)
+  vars:
+    _reboot_window: "{{ nrpe_reboot_alert_window | default(3600) }}"
+    _oom_lookback: "{{ nrpe_oom_lookback_minutes | default(60) }}"
+    _oom_critical: "{{ nrpe_oom_critical_count | default(3) }}"
+    _runuser_path: "{{ nrpe_runuser_path }}"
+    _monitoring_hostname: >-
+      {{ nrpe_monitoring_hostname |
+         default(monitoring_id | default(inventory_hostname_short)) }}
+  block:
+    - name: "Nrpe events :: validate monitoring hostname"
+      ansible.builtin.assert:
+        that:
+          - _monitoring_hostname is match('^[A-Za-z0-9_.-]+$')
+          - _runuser_path is match('^/[A-Za-z0-9_./-]+$')
+        fail_msg: >-
+          Unsafe NRPE identity/path configuration: hostname={{ _monitoring_hostname }},
+          runuser={{ _runuser_path }}
+
+    - name: "Nrpe events :: state parent directory"
+      ansible.builtin.file:
+        path: /var/lib/nagios
+        state: directory
+        owner: nagios
+        group: nagios
+        mode: "0755"
+
+    - name: "Nrpe events :: state directory"
+      ansible.builtin.file:
+        path: /var/lib/nagios/pld-checks
+        state: directory
+        owner: nagios
+        group: nagios
+        mode: "0750"
+
+    - name: "Nrpe events :: install plugins"
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/usr/lib/nagios/plugins/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - check_reboot
+        - check_oom_killer
+      register: _nrpe_events_plugins
+
+    - name: "Nrpe events :: remove legacy uptime command file"
+      ansible.builtin.file:
+        path: /etc/nagios/nrpe.d/check_uptime.cfg
+        state: absent
+      register: _nrpe_events_old_uptime
+
+    - name: "Nrpe events :: reboot command definitions"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_reboot.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          command[check_uptime]=/usr/lib/nagios/plugins/check_reboot --alert-window {{ _reboot_window }} --hostname {{ _monitoring_hostname }}
+          command[check_reboot]=/usr/lib/nagios/plugins/check_reboot --alert-window {{ _reboot_window }} --hostname {{ _monitoring_hostname }}
+      register: _nrpe_events_reboot_cfg
+
+    - name: "Nrpe events :: OOM command definition"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_oom_killer.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          command[check_oom_killer]=/usr/bin/sudo /usr/lib/nagios/plugins/check_oom_killer --lookback-minutes {{ _oom_lookback }} --critical-count {{ _oom_critical }} --hostname {{ _monitoring_hostname }}
+      register: _nrpe_events_oom_cfg
+
+    - name: "Nrpe events :: restricted sudoers rule for OOM journal access"
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/nagios-check_oom_killer
+        owner: root
+        group: root
+        mode: "0440"
+        content: |
+          # Managed by Ansible. Arguments must exactly match the NRPE command.
+          nagios ALL=(root) NOPASSWD: /usr/lib/nagios/plugins/check_oom_killer --lookback-minutes {{ _oom_lookback }} --critical-count {{ _oom_critical }} --hostname {{ _monitoring_hostname }}
+        validate: "visudo -cf %s"
+      register: _nrpe_events_sudoers
+
+    - name: "Nrpe events :: restart NRPE after a change"
+      ansible.builtin.systemd:
+        name: "{{ nrpe_service_name }}"
+        state: restarted
+      when:
+        - nrpe_events_restart | default(true) | bool
+        - >-
+          _nrpe_events_plugins is changed or
+          _nrpe_events_old_uptime is changed or
+          _nrpe_events_reboot_cfg is changed or
+          _nrpe_events_oom_cfg is changed or
+          _nrpe_events_sudoers is changed
+
+    - name: "Nrpe events :: initialize and verify reboot baseline as nagios"
+      ansible.builtin.command:
+        argv:
+          - "{{ _runuser_path }}"
+          - -u
+          - nagios
+          - --
+          - /usr/lib/nagios/plugins/check_reboot
+          - --alert-window
+          - "{{ _reboot_window }}"
+          - --hostname
+          - "{{ _monitoring_hostname }}"
+      register: _nrpe_events_reboot_check
+      changed_when: false
+      failed_when: _nrpe_events_reboot_check.rc not in [0, 1]
+      when: not ansible_check_mode
+
+    - name: "Nrpe events :: verify OOM journal query through the NRPE sudo path"
+      ansible.builtin.command:
+        argv:
+          - "{{ _runuser_path }}"
+          - -u
+          - nagios
+          - --
+          - /usr/bin/sudo
+          - /usr/lib/nagios/plugins/check_oom_killer
+          - --lookback-minutes
+          - "{{ _oom_lookback }}"
+          - --critical-count
+          - "{{ _oom_critical }}"
+          - --hostname
+          - "{{ _monitoring_hostname }}"
+      register: _nrpe_events_oom_check
+      changed_when: false
+      failed_when: _nrpe_events_oom_check.rc not in [0, 1, 2]
+      when: not ansible_check_mode
+
+    - name: "Nrpe events :: show verification output"
+      ansible.builtin.debug:
+        msg:
+          - "{{ _nrpe_events_reboot_check.stdout }}"
+          - "{{ _nrpe_events_oom_check.stdout }}"
+      when: not ansible_check_mode
+
+...

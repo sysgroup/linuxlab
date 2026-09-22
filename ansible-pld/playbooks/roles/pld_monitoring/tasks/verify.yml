@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "PLD NRPE :: require one definition for every published command"
+  ansible.builtin.shell: |
+    set -o pipefail
+    { grep -hE '^command\[{{ item | regex_escape }}\]=' \
+        /etc/nagios/nrpe.d/*.cfg 2>/dev/null || [ "$?" -eq 1 ]; } | wc -l
+  args:
+    executable: /bin/bash
+  loop:
+    - check_load
+    - check_memory
+    - check_procs_zombie
+    - check_log_cron
+    - "{{ nrpe_ntp_command }}"
+    - check_reboot
+    - check_oom_killer
+    - check_systemd_units
+    - check_all_disks
+    - check_poldek_updates
+  loop_control:
+    label: "{{ item }}"
+  register: _pld_monitoring_command_counts
+  changed_when: false
+  failed_when: _pld_monitoring_command_counts.stdout | trim != '1'
+  when: not ansible_check_mode
+
+- name: "PLD NRPE :: report verified command contract"
+  ansible.builtin.debug:
+    msg: >-
+      Verified PLD NRPE commands:
+      {{ _pld_monitoring_command_counts.results
+         | map(attribute='item') | list | join(', ') }}
+  when: not ansible_check_mode

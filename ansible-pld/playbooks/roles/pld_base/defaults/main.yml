@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Small PLD Th baseline. This role installs packages only; service policy
+# belongs to the role that owns the service.
+pld_base_core_packages:
+  # Time, logging and scheduled local maintenance.
+  - ca-certificates
+  - chrony
+  - cronie
+  - logrotate
+  - syslog-ng
+  # Remote administration and diagnostics.
+  - bind-utils
+  - curl
+  - ethtool
+  - file
+  - iproute2
+  - less
+  - lsof
+  - man-db
+  - mtr
+  - nc
+  - openssh-clients
+  - openssl-tools
+  - psmisc
+  - python3
+  - rsync
+  - strace
+  - sudo
+  - sysstat
+  - tar
+  - tcpdump
+  - tmux
+  - unzip
+  - vim
+  - wget
+  - whois
+  - bzip2
+  - xz
+  - zstd
+
+# Proxmox/KVM guest integration. The service is deliberately not enabled by
+# this role: on PLD it is a static unit started by the virtio-port udev event.
+pld_base_kvm_guest_packages:
+  - qemu-guest-agent
+
+# IRQ balancing is useful on some multi-vCPU guests, but is a workload choice
+# rather than a universal VM requirement.
+pld_base_kvm_irqbalance_packages:
+  - irqbalance
+pld_base_enable_irqbalance: false
+
+# Hardware discovery and disk health make sense only when the OS sees real
+# hardware. BMC, firmware, RAID and CPU-vendor-specific tools stay opt-in.
+pld_base_bare_metal_packages:
+  - dmidecode
+  - lm_sensors
+  - smartmontools
+pld_base_bare_metal_extra_packages: []
+
+# Used by the monitoring playbook.
+pld_base_monitoring_packages:
+  - nagios-nrpe
+  - nagios-plugins
+  - nagios-plugin-check_file_age
+  - nagios-plugin-check_load
+  - nagios-plugin-check_ntp
+
+# Convenience tools are opt-in to keep the standard footprint small.
+pld_base_admin_toolbox_packages:
+  - bash-completion
+  - btop
+  - htop
+  - iftop
+  - iotop
+  - jq
+  - lftp
+  - mc
+  - nmap
+  - pciutils
+  - reptyr
+  - ripgrep
+  - socat
+pld_base_enable_admin_toolbox: false
+
+# Per-host application packages belong in an application role. This escape
+# hatch is solely for an exceptional base dependency that has no owner yet.
+pld_base_extra_packages: []

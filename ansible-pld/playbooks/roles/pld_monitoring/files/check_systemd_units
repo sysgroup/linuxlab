@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+"""Nagios plugin reporting systemd units that are broken but not `failed`.
+
+`systemctl --failed` is the obvious check and it is not enough. A unit with
+`Restart=on-failure` whose start keeps failing never settles into `failed`: it
+oscillates between `activating (auto-restart)` and `deactivating`, so it is
+absent from `--failed` for as long as the loop runs.
+
+So this plugin reports two conditions:
+
+* ACTIVE=failed          - a unit that gave up;
+* SUB=auto-restart       - a unit that cannot start and keeps trying.
+
+Units accepted as broken can be excluded with --ignore shell-style globs.
+"""
+
+import argparse
+import fnmatch
+import os
+import re
+import subprocess
+import sys
+
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+# Units are listed as: UNIT LOAD ACTIVE SUB DESCRIPTION.  Only the first four
+# matter and none of them can contain whitespace, so a bounded split is safe
+# even though DESCRIPTION can contain anything.
+_COLUMNS = 5
+
+# CSI sequences systemctl can wrap a `--value` answer in when stdout looks like
+# a terminal, e.g. `\x1b[?1h=11759\x1b[m`.
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def finish(code, summary, details, perfdata):
+    print(f"{summary} | {perfdata}")
+    for line in details:
+        print(line)
+    raise SystemExit(code)
+
+
+def run(systemctl, argv, timeout):
+    """Run systemctl with the pager and colours disabled.
+
+    Without this, `systemctl show --value` can wrap its answer in terminal
+    escape sequences when stdout looks like a terminal, and the numbers come
+    back as `\x1b[?1h=11759\x1b[m`.
+    """
+    environment = dict(os.environ)
+    environment.update(SYSTEMD_COLORS="0", SYSTEMD_PAGER="", PAGER="")
+    return subprocess.run(
+        [systemctl, *argv], capture_output=True, text=True, timeout=timeout,
+        check=False, env=environment,
+    )
+
+
+def list_units(systemctl, timeout):
+    result = run(
+        systemctl,
+        ["list-units", "--all", "--plain", "--no-legend", "--no-pager"],
+        timeout,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"systemctl list-units failed (rc={result.returncode}): "
+            f"{result.stderr.strip()[:200]}"
+        )
+    units = []
+    for line in result.stdout.splitlines():
+        # A unit systemd could not find is prefixed with a bullet; strip any
+        # leading marker before splitting.
+        line = line.strip().lstrip("●✘✗*").strip()
+        if not line:
+            continue
+        fields = line.split(None, _COLUMNS - 1)
+        if len(fields) < 4:
+            continue
+        units.append({
+            "unit": fields[0],
+            "load": fields[1],
+            "active": fields[2],
+            "sub": fields[3],
+            "description": fields[4] if len(fields) > 4 else "",
+        })
+    return units
+
+
+def restart_count(systemctl, unit, timeout):
+    """NRestarts for one unit; None when systemd does not report it."""
+    result = run(
+        systemctl,
+        ["show", unit, "-p", "NRestarts", "--value", "--no-pager"],
+        timeout,
+    )
+    if result.returncode != 0:
+        return None
+    # Strip the escape sequences FIRST, then read the number. Deleting every
+    # non-digit instead looks equivalent and is not: `\x1b[?1h=11759\x1b[m`
+    # carries a literal `1` inside the sequence, so that shortcut reported
+    # 111759 for 11759 restarts.
+    text = _ANSI.sub("", result.stdout)
+    match = re.search(r"\d+", text)
+    return int(match.group()) if match else None
+
+
+def ignored(unit, patterns):
+    return any(fnmatch.fnmatch(unit, pattern) for pattern in patterns)
+
+
+def parse_ignore(values):
+    patterns = []
+    for value in values or []:
+        patterns.extend(part.strip() for part in value.split(",") if part.strip())
+    return patterns
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Report failed systemd units and units stuck in a restart loop.",
+    )
+    parser.add_argument(
+        "--ignore", action="append", default=[],
+        help="comma-separated unit globs to skip (repeatable), e.g. 'certbot.service,lynis.*'",
+    )
+    parser.add_argument(
+        "--warn-only", action="store_true",
+        help="report WARNING instead of CRITICAL; for a staged rollout",
+    )
+    parser.add_argument(
+        "--restart-threshold", type=int, default=0,
+        help="also report a running unit whose NRestarts is at least this "
+             "(0 disables; NRestarts is cumulative since boot)",
+    )
+    parser.add_argument(
+        "--max-listed", type=int, default=10,
+        help="how many unit names to name in the summary line (default 10)",
+    )
+    parser.add_argument(
+        "--systemctl", default="systemctl",
+        help="path to the systemctl binary (tests inject a stub here)",
+    )
+    parser.add_argument("--timeout", type=int, default=20)
+    arguments = parser.parse_args()
+
+    patterns = parse_ignore(arguments.ignore)
+    bad_state = WARNING if arguments.warn_only else CRITICAL
+
+    try:
+        units = list_units(arguments.systemctl, arguments.timeout)
+    except FileNotFoundError:
+        finish(UNKNOWN, "SYSTEMD UNKNOWN - systemctl not found", [],
+               "failed=0 restart_loop=0 flapping=0")
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        finish(UNKNOWN, f"SYSTEMD UNKNOWN - {error}", [],
+               "failed=0 restart_loop=0 flapping=0")
+
+    failed, looping, flapping, skipped = [], [], [], 0
+    for entry in units:
+        name = entry["unit"]
+        if ignored(name, patterns):
+            if entry["active"] == "failed" or entry["sub"] == "auto-restart":
+                skipped += 1
+            continue
+        if entry["sub"] == "auto-restart":
+            # The restart count is what separates "started a moment ago" from
+            # "has been failing for days", so it is worth one extra call here.
+            looping.append((name, restart_count(arguments.systemctl, name, arguments.timeout)))
+        elif entry["active"] == "failed":
+            failed.append(name)
+        elif arguments.restart_threshold > 0 and entry["active"] == "active":
+            count = restart_count(arguments.systemctl, name, arguments.timeout)
+            if count is not None and count >= arguments.restart_threshold:
+                flapping.append((name, count))
+
+    perfdata = (
+        f"failed={len(failed)} restart_loop={len(looping)} "
+        f"flapping={len(flapping)} ignored={skipped}"
+    )
+
+    if not failed and not looping and not flapping:
+        suffix = f" ({skipped} ignored)" if skipped else ""
+        finish(OK, f"SYSTEMD OK - no failed or restarting units{suffix}", [], perfdata)
+
+    parts, details = [], []
+    if looping:
+        shown = ", ".join(
+            name if count is None else f"{name} (NRestarts={count})"
+            for name, count in looping[: arguments.max_listed]
+        )
+        parts.append(f"{len(looping)} in a restart loop: {shown}")
+        details.append(
+            "Restart loop: the unit cannot start and systemd keeps retrying, so it "
+            "never appears in `systemctl --failed`. Check `journalctl -u <unit>`; a "
+            "port already in use usually means a process is running outside systemd."
+        )
+    if failed:
+        parts.append(
+            f"{len(failed)} failed: {', '.join(failed[: arguments.max_listed])}"
+        )
+    if flapping:
+        shown = ", ".join(f"{name} (NRestarts={count})" for name, count in flapping[: arguments.max_listed])
+        parts.append(f"{len(flapping)} flapping: {shown}")
+
+    label = "WARNING" if arguments.warn_only else "CRITICAL"
+    finish(bad_state, f"SYSTEMD {label} - " + "; ".join(parts), details, perfdata)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.TimeoutExpired:
+        finish(UNKNOWN, "SYSTEMD UNKNOWN - systemctl timed out", [],
+               "failed=0 restart_loop=0 flapping=0")
+    except Exception as error:  # noqa: BLE001 - a plugin must never traceback at Nagios
+        finish(UNKNOWN, f"SYSTEMD UNKNOWN - {type(error).__name__}: {error}", [],
+               "failed=0 restart_loop=0 flapping=0")

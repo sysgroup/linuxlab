@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Create this non-root account with sudo access before applying hardening, or
+# override pld_admin_user and ansible_user in your inventory.
+ansible_user: pld-admin
+ansible_become: true
+ansible_become_method: sudo
+
+# Host-local identity used in NRPE output. This is intentionally independent
+# from the central Nagios inventory projection.
+monitoring_id: "{{ inventory_hostname }}"
+
+# Add trusted administrative source ranges here when needed.
+fail2ban_ignoreip:
+  - 127.0.0.1/8
+  - ::1
+
+# Set true only while triaging pre-existing failed systemd units.
+nrpe_systemd_warn_only: false

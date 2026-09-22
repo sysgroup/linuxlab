@@ -1,0 +1,16 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+# {{ ansible_managed }}
+#
+# Used only with a specific NRPE bind address. network-online.target alone
+# cannot guarantee that the address exists, so failed starts are retried.
+# StartLimitBurst and StartLimitIntervalSec belong in [Unit].
+[Unit]
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=20
+StartLimitIntervalSec=300
+
+[Service]
+Restart=on-failure
+RestartSec=5s

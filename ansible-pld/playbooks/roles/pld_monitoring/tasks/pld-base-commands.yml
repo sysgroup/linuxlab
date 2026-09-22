@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "PLD base NRPE :: require plugin binaries"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/lib/nagios/plugins/check_procs
+    - /usr/lib/nagios/plugins/check_file_age
+    - /usr/lib/nagios/plugins/check_ntp_time
+  register: _pld_base_plugin_paths
+
+- name: "PLD base NRPE :: assert plugin binaries are present"
+  ansible.builtin.assert:
+    that:
+      - _pld_base_plugin_paths.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      The PLD monitoring package profile did not provide all base NRPE plugins.
+    quiet: true
+
+- name: "PLD base NRPE :: validate NTP command configuration"
+  ansible.builtin.assert:
+    that:
+      - nrpe_ntp_command is match('^[A-Za-z0-9_.-]+$')
+      - nrpe_ntp_server | default('') is match('^[A-Za-z0-9.-]+$')
+    fail_msg: >-
+      Set nrpe_ntp_server in inventory to a safe host name before applying
+      monitoring.
+    quiet: true
+
+- name: "PLD base NRPE :: deploy supplementary base commands"
+  ansible.builtin.copy:
+    dest: "/etc/nagios/nrpe.d/{{ item.file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/pld_monitoring/tasks/pld-base-commands.yml).
+      {{ item.command }}
+  loop:
+    - file: check_proc_zombie.cfg
+      command: "command[check_procs_zombie]=/usr/lib/nagios/plugins/check_procs -w 5 -c 10 -s Z"
+    - file: check_log_cron.cfg
+      command: "command[check_log_cron]=/usr/lib/nagios/plugins/check_file_age -w 360 -c 3600 -f /var/log/cron"
+    - file: "{{ nrpe_ntp_command }}.cfg"
+      command: "command[{{ nrpe_ntp_command }}]=/usr/lib/nagios/plugins/check_ntp_time -H {{ nrpe_ntp_server }} -w 0.5 -c 1"
+  loop_control:
+    label: "{{ item.file }}"
+  register: _pld_base_command_cfg
+
+- name: "PLD base NRPE :: restart agent after supplementary command changes"
+  ansible.builtin.systemd:
+    name: "{{ nrpe_service_name }}"
+    state: restarted
+  when:
+    - _pld_base_command_cfg is changed
+    - not ansible_check_mode

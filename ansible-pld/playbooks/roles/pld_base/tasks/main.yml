@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: PLD platform guard
+  ansible.builtin.import_tasks: assert.yml
+
+- name: "Packages :: select the core profile"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: "{{ pld_base_core_packages | unique | sort }}"
+
+- name: "Packages :: add the KVM guest profile"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: >-
+      {{ (_pld_base_requested_packages + pld_base_kvm_guest_packages) | unique | sort }}
+  when:
+    - ansible_facts['virtualization_role'] == 'guest'
+    - ansible_facts['virtualization_type'] == 'kvm'
+
+- name: "Packages :: add IRQ balancing for an opted-in KVM guest"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: >-
+      {{ (_pld_base_requested_packages + pld_base_kvm_irqbalance_packages) | unique | sort }}
+  when:
+    - pld_base_enable_irqbalance | bool
+    - ansible_facts['virtualization_role'] == 'guest'
+    - ansible_facts['virtualization_type'] == 'kvm'
+
+- name: "Packages :: add the bare-metal profile"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: >-
+      {{ (_pld_base_requested_packages
+          + pld_base_bare_metal_packages
+          + pld_base_bare_metal_extra_packages) | unique | sort }}
+  when: ansible_facts['virtualization_role'] == 'host'
+
+- name: "Packages :: add the opted-in admin toolbox"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: >-
+      {{ (_pld_base_requested_packages + pld_base_admin_toolbox_packages) | unique | sort }}
+  when: pld_base_enable_admin_toolbox | bool
+
+- name: "Packages :: add explicit host exceptions"
+  ansible.builtin.set_fact:
+    _pld_base_requested_packages: >-
+      {{ (_pld_base_requested_packages + pld_base_extra_packages) | unique | sort }}
+
+- name: Install the selected PLD package profile
+  ansible.builtin.import_tasks: install.yml

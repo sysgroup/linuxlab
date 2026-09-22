@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Sshd :: ensure drop-in directory exists"
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Validate the candidate before touching the live include directory. The
+# wrapper reads our candidate first, then the complete current sshd_config;
+# OpenSSH uses the first value found for each global keyword.
+- name: "Sshd :: render candidate in /run"
+  ansible.builtin.template:
+    src: sshd-hardening.conf.j2
+    dest: /run/pld-sshd-hardening.candidate
+    owner: root
+    group: root
+    mode: "0600"
+  check_mode: false
+  changed_when: false
+
+- name: "Sshd :: write candidate validation wrapper"
+  ansible.builtin.copy:
+    dest: /run/pld-sshd-validation.conf
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      Include /run/pld-sshd-hardening.candidate
+      Include /etc/ssh/sshd_config
+  check_mode: false
+  changed_when: false
+
+- name: "Sshd :: validate candidate with full current config"
+  ansible.builtin.command: /usr/sbin/sshd -t -f /run/pld-sshd-validation.conf
+  changed_when: false
+  check_mode: false
+
+- name: "Sshd :: deploy early hardening drop-in"
+  ansible.builtin.template:
+    src: sshd-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-pld-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reload PLD sshd
+
+- name: "Sshd :: remove drop-ins left by an earlier version of this role"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ pld_hardening_legacy_files | select('match', '^/etc/ssh/sshd_config[.]d/') | list }}"
+  notify: Reload PLD sshd
+
+- name: "Sshd :: validate live effective config"
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: "Sshd :: remove validation files"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /run/pld-sshd-hardening.candidate
+    - /run/pld-sshd-validation.conf
+  check_mode: false
+  changed_when: false

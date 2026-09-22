@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+"""Nagios plugin based on Linux MemAvailable rather than cache-heavy used RAM."""
+
+import argparse
+import socket
+
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+
+def finish(code, message, available_pct=None, swap_used_pct=None):
+    perfdata = ""
+    if available_pct is not None:
+        perfdata = f" | available={available_pct:.2f}%"
+        if swap_used_pct is not None:
+            perfdata += f" swap_used={swap_used_pct:.2f}%"
+    print(f"{message}{perfdata}")
+    raise SystemExit(code)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Check Linux MemAvailable percentage")
+    parser.add_argument("--warning-available", type=float, default=15.0)
+    parser.add_argument("--critical-available", type=float, default=8.0)
+    parser.add_argument("--meminfo-file", default="/proc/meminfo", help=argparse.SUPPRESS)
+    parser.add_argument("--hostname", default=socket.gethostname(), help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def read_meminfo(path):
+    values = {}
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            key, separator, remainder = line.partition(":")
+            if not separator:
+                continue
+            fields = remainder.split()
+            if fields:
+                values[key] = int(fields[0])
+    return values
+
+
+def main():
+    args = parse_args()
+    if not (0 < args.critical_available < args.warning_available < 100):
+        finish(UNKNOWN, "MEMORY UNKNOWN - require 0 < critical < warning < 100")
+    try:
+        memory = read_meminfo(args.meminfo_file)
+        total = memory["MemTotal"]
+        available = memory["MemAvailable"]
+        if total <= 0:
+            raise ValueError("MemTotal is not positive")
+    except (OSError, KeyError, ValueError) as exc:
+        finish(UNKNOWN, f"MEMORY UNKNOWN - server {args.hostname}: invalid meminfo: {exc}")
+
+    available_pct = available * 100.0 / total
+    swap_total = memory.get("SwapTotal", 0)
+    swap_free = memory.get("SwapFree", 0)
+    swap_used_pct = ((swap_total - swap_free) * 100.0 / swap_total) if swap_total else 0.0
+    detail = (
+        f"server {args.hostname}: available {available_pct:.1f}% "
+        f"({available // 1024} MiB of {total // 1024} MiB), swap used {swap_used_pct:.1f}%"
+    )
+
+    if available_pct <= args.critical_available:
+        finish(CRITICAL, f"MEMORY CRITICAL - {detail}", available_pct, swap_used_pct)
+    if available_pct <= args.warning_available:
+        finish(WARNING, f"MEMORY WARNING - {detail}", available_pct, swap_used_pct)
+    finish(OK, f"MEMORY OK - {detail}", available_pct, swap_used_pct)
+
+
+if __name__ == "__main__":
+    main()

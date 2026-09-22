@@ -1,0 +1,7 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright 2026 SysGroup Sp. z o.o. #}
+## {{ ansible_managed }}
+## PLD baseline. IP forwarding is intentionally managed elsewhere.
+{% for key, value in pld_sysctl_hardening | dictsort %}
+{{ key }} = {{ value }}
+{% endfor %}

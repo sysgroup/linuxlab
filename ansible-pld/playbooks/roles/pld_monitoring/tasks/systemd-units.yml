@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Deploys an NRPE check for failed and restart-looping systemd units. A central
+# monitoring service must request the command before it can raise alerts.
+
+- name: "Nrpe systemd :: detect plugins directory"
+  ansible.builtin.stat:
+    path: /usr/lib/nagios/plugins
+  register: _nrpe_systemd_plugins_dir
+
+- name: "Nrpe systemd :: deploy when NRPE is present"
+  when: _nrpe_systemd_plugins_dir.stat.exists | default(false)
+  vars:
+    # An empty list reports every failed or restarting unit.
+    _ignore: "{{ nrpe_systemd_ignore | default([]) }}"
+    # --warn-only supports a staged rollout without hiding existing failures.
+    _warn_only: "{{ nrpe_systemd_warn_only | default(false) | bool }}"
+    _runuser_path: "{{ nrpe_runuser_path }}"
+    # Keep the local verification invocation identical to the NRPE command.
+    # Without one shared list, a staged --warn-only rollout could look
+    # CRITICAL during deployment although NRPE correctly reports WARNING.
+    _nrpe_systemd_plugin_args: >-
+      {{ (['--warn-only'] if _warn_only else [])
+         + (['--ignore', _ignore | join(',')] if _ignore | length > 0 else []) }}
+  block:
+    # Unit patterns are rendered into an NRPE command and must be safe tokens.
+    - name: "Nrpe systemd :: validate the ignore list"
+      ansible.builtin.assert:
+        that:
+          - _ignore | select('match', '^[A-Za-z0-9_.@:*?\\[\\]-]+$') | list | length == _ignore | length
+        fail_msg: >-
+          nrpe_systemd_ignore contains a name with a forbidden character:
+          {{ _ignore | reject('match', '^[A-Za-z0-9_.@:*?\\[\\]-]+$') | list }}
+        quiet: true
+
+    - name: "Nrpe systemd :: install the plugin"
+      ansible.builtin.copy:
+        src: check_systemd_units
+        dest: /usr/lib/nagios/plugins/check_systemd_units
+        owner: root
+        group: root
+        mode: "0755"
+      register: _nrpe_systemd_plugin
+
+    # The plugin only reads systemd state and runs as the NRPE user without sudo.
+    - name: "Nrpe systemd :: NRPE command definition"
+      ansible.builtin.copy:
+        dest: /etc/nagios/nrpe.d/check_systemd_units.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          # Managed by Ansible.  Thresholds and exclusions are fixed here;
+          # NRPE callers cannot supply arbitrary arguments.
+          command[check_systemd_units]=/usr/lib/nagios/plugins/check_systemd_units{{ ' ' ~ (_nrpe_systemd_plugin_args | join(' ')) if _nrpe_systemd_plugin_args | length > 0 else '' }}
+      register: _nrpe_systemd_cfg
+
+    - name: "Nrpe systemd :: restart NRPE after a change"
+      ansible.builtin.systemd:
+        name: "{{ nrpe_service_name }}"
+        state: restarted
+      when:
+        - nrpe_systemd_restart | default(true) | bool
+        - _nrpe_systemd_plugin is changed or _nrpe_systemd_cfg is changed
+
+    # Run through the same user path as NRPE; plugin statuses 0-3 are valid.
+    - name: "Nrpe systemd :: verify through the NRPE execution path"
+      ansible.builtin.command:
+        argv: >-
+          {{ [_runuser_path, '-u', 'nagios', '--',
+              '/usr/lib/nagios/plugins/check_systemd_units']
+             + _nrpe_systemd_plugin_args }}
+      register: _nrpe_systemd_check
+      changed_when: false
+      failed_when: _nrpe_systemd_check.rc not in [0, 1, 2, 3]
+      when: not ansible_check_mode
+
+    - name: "Nrpe systemd :: show what the check sees"
+      ansible.builtin.debug:
+        msg: "{{ _nrpe_systemd_check.stdout_lines | default([]) }}"
+      when: not ansible_check_mode
+...

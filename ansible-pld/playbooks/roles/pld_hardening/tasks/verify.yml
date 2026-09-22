@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: "Verify :: read effective SSH configuration"
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: _pld_sshd_effective
+  changed_when: false
+  check_mode: false
+
+# OpenSSH releases differ in the capitalization used by `sshd -T`; normalize
+# the full output before comparing directives.
+- name: "Verify :: normalise effective SSH configuration"
+  ansible.builtin.set_fact:
+    _pld_sshd_effective_lower: "{{ _pld_sshd_effective.stdout | lower }}"
+
+- name: "Verify :: assert critical SSH settings"
+  ansible.builtin.assert:
+    that:
+      - "'permitrootlogin no' in _pld_sshd_effective_lower"
+      - "'passwordauthentication no' in _pld_sshd_effective_lower"
+      - "'kbdinteractiveauthentication no' in _pld_sshd_effective_lower"
+      - "'pubkeyauthentication yes' in _pld_sshd_effective_lower"
+      - "('allowtcpforwarding ' ~ pld_sshd_allow_tcp_forwarding) in _pld_sshd_effective_lower"
+    fail_msg: "Effective sshd configuration does not match the PLD baseline"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "Verify :: read effective sysctl values"
+  vars:
+    _pld_sysctl_items: "{{ pld_sysctl_hardening | dict2items | sort(attribute='key') }}"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['sysctl', '-n'] + (_pld_sysctl_items | map(attribute='key') | list) }}
+  register: _pld_sysctl_effective
+  changed_when: false
+  check_mode: false
+
+- name: "Verify :: assert effective sysctl values"
+  vars:
+    _pld_sysctl_items: "{{ pld_sysctl_hardening | dict2items | sort(attribute='key') }}"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_pld_sysctl_effective.stdout_lines | map('trim') | list)
+        == (_pld_sysctl_items | map(attribute='value') | map('string') | list)
+    fail_msg: >-
+      Effective sysctl values differ for
+      {{ _pld_sysctl_items | map(attribute='key') | join(', ') }}:
+      got {{ _pld_sysctl_effective.stdout_lines | map('trim') | join(', ') }};
+      expected {{ _pld_sysctl_items | map(attribute='value') | map('string') | join(', ') }}
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "Verify :: read audit status"
+  ansible.builtin.command: /sbin/auditctl -s
+  register: _pld_audit_status
+  changed_when: false
+  when:
+    - _pld_auditd_usable
+    - not ansible_check_mode
+
+- name: "Verify :: assert audit is enabled and not losing events"
+  ansible.builtin.assert:
+    that:
+      - _pld_audit_status.stdout is search('enabled\s+[12]')
+      - _pld_audit_status.stdout is search('lost\s+0')
+    fail_msg: "auditd is not enabled or reports lost events"
+    quiet: true
+  when:
+    - _pld_auditd_usable
+    - not ansible_check_mode
+
+- name: "Verify :: report firewall ownership boundary"
+  ansible.builtin.debug:
+    msg: >-
+      pld_hardening does not manage the base iptables policy; review and deploy
+      a host-specific firewall separately

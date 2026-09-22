@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+collections:
+  - name: community.general
+    version: ">=13.3.0,<14.0.0"
