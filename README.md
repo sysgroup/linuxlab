@@ -9,16 +9,14 @@ z dokumentacji.
 
 | Ścieżka | Opis |
 | --- | --- |
-| [`scripts/power-probe.py`](scripts/power-probe.py) | Odczyt poboru mocy maszyny ze wszystkich dostępnych w Linuksie źródeł (IPMI, DCMI, hwmon, RAPL, bateria) wraz z zakresem, jaki obejmuje każde z nich. |
-| [`docs/power-probe.md`](docs/power-probe.md) | Co który interfejs mierzy, na jakim sprzęcie działa, i czego nie da się odczytać. |
-| [`tests/`](tests/) | Testy jednostkowe, uruchamiane bez dostępu do sprzętu. |
+| [`power-probe/`](power-probe/) | Odczyt poboru mocy maszyny ze wszystkich dostępnych w Linuksie źródeł (IPMI, DCMI, hwmon, RAPL, bateria) wraz z zakresem, jaki obejmuje każde z nich. W README: co który interfejs mierzy, na jakim sprzęcie działa i czego nie da się odczytać; testy działają bez dostępu do sprzętu. |
 | [`terraform/`](terraform/) | Lab KVM opisany w Terraform: jedenaście maszyn (Debian, Ubuntu, pulpit, Proxmox Backup Server, k3s, Docker) w trzech warstwach, z cloud-init i poprawkami XML domen. Sprawdzony na Debianie 13 z libvirt 11.3. |
 | [`ansible-pld/`](ansible-pld/) | Playbooki Ansible dla PLD Linux Th z systemd: profil pakietów instalowany przez Poldek, hardening (SSH, sysctl, fail2ban, auditd) i monitoring przez NRPE (Nagios Remote Plugin Executor). Dokumentacja po angielsku. Sprawdzone na PLD Th 3.0. |
 
 ## Wymagania
 
-Skrypty: Python 3.7 lub nowszy, bez zewnętrznych bibliotek. Liczniki RAPL i IPMI
-zwykle wymagają uprawnień roota. Lab: libvirt z KVM oraz Terraform albo OpenTofu -
+power-probe: Python 3.7 lub nowszy, bez zewnętrznych bibliotek. Liczniki RAPL
+i IPMI zwykle wymagają uprawnień roota. Lab: libvirt z KVM oraz Terraform albo OpenTofu -
 szczegóły w [`terraform/README.md`](terraform/README.md). PLD: Ansible z kolekcją
 `community.general` - szczegóły w [`ansible-pld/README.md`](ansible-pld/README.md).
 
@@ -26,14 +24,17 @@ szczegóły w [`terraform/README.md`](terraform/README.md). PLD: Ansible z kolek
 
 ```bash
 git clone https://github.com/sysgroup/linuxlab.git
-cd linuxlab
+cd linuxlab/power-probe
 
-sudo ./scripts/power-probe.py -i 10      # pomiar w oknie 10 sekund
-./scripts/power-probe.py --list          # tylko wykryte źródła
-sudo ./scripts/power-probe.py --json     # wynik do monitoringu
+sudo ./power-probe.py -i 10              # pomiar w oknie 10 sekund
+./power-probe.py --list                  # tylko wykryte źródła
+sudo ./power-probe.py --json             # wynik do monitoringu
 
 python3 -m unittest discover -s tests -v # testy
 ```
+
+Każdy katalog ma własne README z instrukcją; polecenia uruchamia się z jego
+wnętrza.
 
 ## Powiązane artykuły
 

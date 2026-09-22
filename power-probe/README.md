@@ -1,18 +1,18 @@
-# Pomiar poboru mocy maszyn (`scripts/power-probe.py`)
+# Pomiar poboru mocy maszyn (`power-probe.py`)
 
 Skrypt wykrywa i odczytuje wszystkie dostępne w Linuksie źródła pomiaru mocy,
 podając przy każdym **zakres pomiaru** - bo to, czy liczba oznacza cały serwer,
 czy sam procesor, decyduje o jej wartości.
 
 ```bash
-# lokalnie
-sudo scripts/power-probe.py -i 10
+# lokalnie, z tego katalogu
+sudo ./power-probe.py -i 10
 
 # na zdalnym hoście, bez kopiowania pliku na dysk
-ssh <host> "sudo python3 - -i 10" < scripts/power-probe.py
+ssh <host> "sudo python3 - -i 10" < power-probe.py
 
 # do monitoringu: jedna linia JSON na pomiar
-sudo ./scripts/power-probe.py -i 60 -n 0 --json
+sudo ./power-probe.py -i 60 -n 0 --json
 ```
 
 Skrypt nie ma zewnętrznych zależności (biblioteka standardowa, Python 3.7+),
@@ -79,3 +79,7 @@ rośnie pod obciążeniem, nie jest pomiarem mocy.
 (w tym przecinek dziesiętny z polskiej lokalizacji), odczyt i stan DCMI,
 przewinięcie licznika energii RAPL oraz odmowę odczytu z baterii, która nie
 jest rozładowywana.
+
+```bash
+python3 -m unittest discover -s tests -v
+```

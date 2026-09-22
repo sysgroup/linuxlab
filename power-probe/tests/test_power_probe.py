@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 SysGroup Sp. z o.o.
-"""Testy parsowania i liczenia w scripts/power-probe.py (bez sprzętu)."""
+"""Testy parsowania i liczenia w power-probe.py (bez sprzętu)."""
 
 import importlib.util
 import os
@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("power_probe", ROOT / "scripts" / "power-probe.py")
+SPEC = importlib.util.spec_from_file_location("power_probe", ROOT / "power-probe.py")
 power_probe = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(power_probe)
 
