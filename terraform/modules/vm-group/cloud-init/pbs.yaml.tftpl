@@ -1,0 +1,62 @@
+#cloud-config
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# ============================================================================
+#  pbs.yaml.tftpl  -  profil "pbs" / Proxmox Backup Server na Debianie
+# ----------------------------------------------------------------------------
+#  PL: PBS nie ma cloud-image - instalujemy go na Debianie 12 (bookworm) z repo
+#      "pbs-no-subscription". Dyski danych (vdb..vde, 4×50 GiB z extra_disks_gib)
+#      zostają SUROWE - datastore (najlepiej ZFS) tworzysz potem ręcznie lub
+#      Ansiblem (komentarz niżej), żeby Terraform nie kasował danych przy zmianach.
+#  EN: PBS has no cloud-image - we install it on Debian 12 (bookworm) from the
+#      "pbs-no-subscription" repo. The data disks (vdb..vde, 4×50 GiB from
+#      extra_disks_gib) are left RAW - you create the datastore (ZFS ideally)
+#      later by hand or via Ansible (see note), so Terraform never wipes data.
+# ============================================================================
+
+hostname: ${hostname}
+fqdn: ${hostname}.${domain}
+
+ssh_pwauth: true
+
+users:
+  - name: ${username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+chpasswd:
+  expire: false
+  users:
+    - name: ${username}
+      password: ${user_password}
+      type: text
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - qemu-guest-agent
+  - curl
+  - gnupg
+
+runcmd:
+  - install -d -m 0755 /etc/apt/keyrings
+  # --- Repo Proxmox Backup Server (bez subskrypcji / no-subscription) ---
+  - curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -o /etc/apt/keyrings/proxmox-release-bookworm.gpg
+  - echo "deb [signed-by=/etc/apt/keyrings/proxmox-release-bookworm.gpg] http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" > /etc/apt/sources.list.d/pbs.list
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-backup-server
+  # PL: GUI PBS: https://${hostname}.${domain}:8007 (login: root / hasło systemowe).
+  #     Datastore na dyskach danych zrób potem, np. (ZFS RAID10 z 4 dysków):
+  #       zpool create -f backup mirror /dev/vdb /dev/vdc mirror /dev/vdd /dev/vde
+  #       proxmox-backup-manager datastore create main /backup
+  # EN: PBS GUI: https://${hostname}.${domain}:8007. Create the datastore on the
+  #     data disks afterwards, e.g. (ZFS RAID10 across the 4 disks):
+  #       zpool create -f backup mirror /dev/vdb /dev/vdc mirror /dev/vdd /dev/vde
+  #       proxmox-backup-manager datastore create main /backup
+
+final_message: "cloud-init OK - PBS na ${hostname}.${domain}:8007 / PBS up; create datastore on vdb..vde."

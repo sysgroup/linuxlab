@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+#
+# Przetestowana ścieżka: dysk VM jako samodzielna kopia RAW obrazu bazowego
+# (disk_strategy = "copy"), firmware UEFI (domyślne). Nakładka copy-on-write
+# ("cow") na hostach z AppArmor nie startuje - patrz README.
+# wait_for_lease = false: apply nie czeka na DHCP; adresy da `make ssh-config`.
+disk_strategy  = "copy"
+wait_for_lease = false

@@ -1,0 +1,47 @@
+#cloud-config
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# ============================================================================
+#  base.yaml.tftpl  -  profil "base" / minimalny cel dla Ansible
+# ----------------------------------------------------------------------------
+#  PL: Najprostszy profil: konto + klucz SSH + agent QEMU + Python. To są
+#      maszyny testowe (Debian/Ubuntu), na których odpalasz playbooki Ansible.
+#  EN: The simplest profile: account + SSH key + QEMU agent + Python. These are
+#      the test boxes (Debian/Ubuntu) you target with Ansible playbooks.
+#  PL: $${...} to podstawienia Terraform (templatefile), NIE bash.
+#  EN: $${...} are Terraform (templatefile) substitutions, NOT bash.
+# ============================================================================
+
+hostname: ${hostname}
+fqdn: ${hostname}.${domain}
+
+ssh_pwauth: true
+
+users:
+  - name: ${username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+chpasswd:
+  expire: false
+  users:
+    - name: ${username}
+      password: ${user_password}
+      type: text
+
+package_update: true
+package_upgrade: false
+
+# PL: qemu-guest-agent => host widzi IP gościa; python3 => target Ansible.
+# EN: qemu-guest-agent => host can read the guest IP; python3 => Ansible target.
+packages:
+  - qemu-guest-agent
+  - python3
+  - sudo
+  - curl
+
+final_message: "cloud-init OK - ${hostname}.${domain} gotowy jako cel Ansible / ready as an Ansible target."

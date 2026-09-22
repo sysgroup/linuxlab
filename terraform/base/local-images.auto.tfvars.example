@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+#
+# Przetestowana ścieżka: obrazy bazowe jako lokalne pliki RAW (patrz README,
+# "Obrazy bazowe w formacie RAW"). Skopiuj bez końcówki .example i podmień
+# /home/UZYTKOWNIK na swój katalog domowy - ścieżki muszą być bezwzględne.
+#   cp local-images.auto.tfvars.example local-images.auto.tfvars
+# Ten plik NADPISUJE całą mapę `distros` z variables.tf.
+distros = {
+  "debian-11"   = { pretty = "Debian 11 (raw)", latest_url = "/home/UZYTKOWNIK/lab-golden/debian-11.raw" }
+  "debian-12"   = { pretty = "Debian 12 (raw)", latest_url = "/home/UZYTKOWNIK/lab-golden/debian-12.raw" }
+  "debian-13"   = { pretty = "Debian 13 (raw)", latest_url = "/home/UZYTKOWNIK/lab-golden/debian-13.raw" }
+  "ubuntu-2204" = { pretty = "Ubuntu 22.04 (raw)", latest_url = "/home/UZYTKOWNIK/lab-golden/ubuntu-2204.raw" }
+  "ubuntu-2404" = { pretty = "Ubuntu 24.04 (raw)", latest_url = "/home/UZYTKOWNIK/lab-golden/ubuntu-2404.raw" }
+  "ubuntu-2604" = { pretty = "Ubuntu 26.04 (raw)", latest_url = "/home/UZYTKOWNIK/lab-golden/ubuntu-2604.raw" }
+}
+enabled_distros = ["debian-11", "debian-12", "debian-13", "ubuntu-2204", "ubuntu-2404", "ubuntu-2604"]

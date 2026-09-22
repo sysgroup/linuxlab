@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# ============================================================================
+#  base/pinned.tfvars.example
+#  Zbuduj warstwę base z obrazami z KONKRETNEGO DNIA (powtarzalny build)
+#  Build the base layer from cloud images of a SPECIFIC DAY (reproducible)
+# ----------------------------------------------------------------------------
+#  PL: Skopiuj do base/pinned.tfvars i użyj:
+#        cd terraform/base
+#        terraform apply -var-file=pinned.tfvars
+#      (plik *.tfvars jest w .gitignore - Twoje lokalne piny zostają lokalnie;
+#       ten *.example jest commitowany jako wzorzec.)
+#  EN: Copy to base/pinned.tfvars and run: terraform apply -var-file=pinned.tfvars
+# ============================================================================
+
+# 1) Buduj tylko obrazy debianowych testboxów (bez Ubuntu).
+#    Jeśli wdrażasz też infra/, dorzuć distra, których ona używa (np. ubuntu-2404).
+enabled_distros = ["debian-11", "debian-12", "debian-13"]
+
+# 2) Przypnij każdy obraz do snapshotu z 2026-06-01 (serial 20260601-2496).
+#    image_overrides ma PIERWSZEŃSTWO nad image_channel - to najprostszy sposób
+#    na "konkretny dzień". Aby wybrać inny dzień: weź aktualny serial z
+#      https://cloud.debian.org/images/cloud/<codename>/
+#    i podmień GO ZARÓWNO w katalogu, JAK i w nazwie pliku (Debian wstawia serial
+#    w obu miejscach). Codename: bullseye=11, bookworm=12, trixie=13.
+image_overrides = {
+  "debian-11" = "https://cloud.debian.org/images/cloud/bullseye/20260601-2496/debian-11-genericcloud-amd64-20260601-2496.qcow2"
+  "debian-12" = "https://cloud.debian.org/images/cloud/bookworm/20260601-2496/debian-12-genericcloud-amd64-20260601-2496.qcow2"
+  "debian-13" = "https://cloud.debian.org/images/cloud/trixie/20260601-2496/debian-13-genericcloud-amd64-20260601-2496.qcow2"
+}
+
+# ----------------------------------------------------------------------------
+# Alternatywa BEZ image_overrides: użyj wbudowanych pinned_url z katalogu distros
+# (variables.tf) jednym przełącznikiem - wtedy ten plik nie jest potrzebny:
+#     terraform apply -var='image_channel=pinned' \
+#                      -var='enabled_distros=["debian-11","debian-12","debian-13"]'
+#
+# Dla Ubuntu wzorzec daty to katalog "release-YYYYMMDD" (data tylko w katalogu,
+# nazwa pliku stała), np.:
+#   https://cloud-images.ubuntu.com/releases/24.04/release-20260518/ubuntu-24.04-server-cloudimg-amd64.img
+# ----------------------------------------------------------------------------

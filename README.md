@@ -12,11 +12,13 @@ z dokumentacji.
 | [`scripts/power-probe.py`](scripts/power-probe.py) | Odczyt poboru mocy maszyny ze wszystkich dostępnych w Linuksie źródeł (IPMI, DCMI, hwmon, RAPL, bateria) wraz z zakresem, jaki obejmuje każde z nich. |
 | [`docs/power-probe.md`](docs/power-probe.md) | Co który interfejs mierzy, na jakim sprzęcie działa, i czego nie da się odczytać. |
 | [`tests/`](tests/) | Testy jednostkowe, uruchamiane bez dostępu do sprzętu. |
+| [`terraform/`](terraform/) | Lab KVM opisany w Terraform: jedenaście maszyn (Debian, Ubuntu, pulpit, Proxmox Backup Server, k3s, Docker) w trzech warstwach, z cloud-init i poprawkami XML domen. Sprawdzony na Debianie 13 z libvirt 11.3. |
 
 ## Wymagania
 
-Python 3.7 lub nowszy, bez zewnętrznych bibliotek. Liczniki RAPL i IPMI zwykle
-wymagają uprawnień roota.
+Skrypty: Python 3.7 lub nowszy, bez zewnętrznych bibliotek. Liczniki RAPL i IPMI
+zwykle wymagają uprawnień roota. Lab: libvirt z KVM oraz Terraform albo OpenTofu -
+szczegóły w [`terraform/README.md`](terraform/README.md).
 
 ## Szybki start
 

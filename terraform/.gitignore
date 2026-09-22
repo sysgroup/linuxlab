@@ -1,0 +1,17 @@
+# Stan i cache Terraform. Stan zawiera m.in. hasło konta z cloud-init - nigdy do repo.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Lokalne ustawienia (ścieżki, hasła). W repozytorium tylko pliki *.example.
+*.tfvars
+*.auto.tfvars
+!*.example
+
+# Obrazy dysków (gigabajty, odtwarzalne skryptem scripts/cloud-image-to-raw.sh)
+*.raw
+*.qcow2
+*.img

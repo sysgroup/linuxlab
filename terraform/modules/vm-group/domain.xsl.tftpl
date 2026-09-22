@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 SysGroup Sp. z o.o. -->
+<!--
+  domain.xsl.tftpl - poprawki XML domeny, których provider 0.8.3 nie umie wyrazić
+  PL: Szablon Terraform (templatefile) renderowany per VM; zmienna `headless`.
+      1) Dyski *.qcow2: provider oznacza każdy `disk.file` jako RAW, a my
+         zachowujemy type='file' (AppArmor) i korygujemy tylko format sterownika.
+      2) Zegary jak w virt-install: bez emulowanego HPET. Emulacja HPET w QEMU
+         budziła wątek główny 250 razy/s i kosztowała 3,3-5,8% rdzenia hosta
+         na KAŻDĄ bezczynną VM (pomiar: https://linuxlab.pl/zuzycie-energii-host-kvm-laptop.html).
+      3) headless: provider bez bloku `graphics` i tak dodaje SPICE, a libvirt
+         kartę `cirrus`; odświeżanie tego ekranu to kolejne ok. 1,7% rdzenia na VM.
+         Zostaje konsola szeregowa (`make console`).
+  EN: Per-VM XML fixes the provider cannot express: qcow2 driver type, no emulated
+      HPET (250 wakeups/s per idle VM) and no implicit SPICE/cirrus for headless VMs.
+-->
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:output method="xml" omit-xml-declaration="yes"/>
+
+  <xsl:template match="@*|node()">
+    <xsl:copy>
+      <xsl:apply-templates select="@*|node()"/>
+    </xsl:copy>
+  </xsl:template>
+
+  <xsl:template match="/domain/devices/disk[@device='disk'][source[contains(@file, '.qcow2')]]/driver/@type">
+    <xsl:attribute name="type">qcow2</xsl:attribute>
+  </xsl:template>
+
+  <xsl:template match="/domain">
+    <xsl:copy>
+      <xsl:apply-templates select="@*|node()[not(self::clock)]"/>
+      <clock offset="utc">
+        <timer name="rtc" tickpolicy="catchup"/>
+        <timer name="pit" tickpolicy="delay"/>
+        <timer name="hpet" present="no"/>
+      </clock>
+    </xsl:copy>
+  </xsl:template>
+%{ if headless ~}
+
+  <xsl:template match="/domain/devices/graphics"/>
+  <xsl:template match="/domain/devices/video"/>
+  <xsl:template match="/domain/devices/audio"/>
+%{ endif ~}
+</xsl:stylesheet>

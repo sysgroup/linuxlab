@@ -1,0 +1,61 @@
+#cloud-config
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# ============================================================================
+#  k3s.yaml.tftpl  -  profil "k3s" / lekki Kubernetes pod AWX (i Rancher)
+# ----------------------------------------------------------------------------
+#  PL: Instalujemy k3s (jednowęzłowy Kubernetes). To baza pod AWX - manifesty
+#      operatora bierzesz z github.com/ansible/awx-operator (kustomize). Rancher/monitoring to
+#      ten sam pomysł: najpierw klaster, potem aplikacja przez Ansible/kubectl.
+#      Terraform = infrastruktura (VM + k8s); wdrożenie AWX = krok aplikacyjny.
+#  EN: We install k3s (single-node Kubernetes) as the base for AWX - the operator
+#      manifests come from github.com/ansible/awx-operator (kustomize). Rancher/monitoring
+#      follow the same idea: cluster first, app later via Ansible/kubectl.
+#      Terraform = infrastructure (VM + k8s); deploying AWX = the app step.
+# ============================================================================
+
+hostname: ${hostname}
+fqdn: ${hostname}.${domain}
+
+ssh_pwauth: true
+
+users:
+  - name: ${username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+chpasswd:
+  expire: false
+  users:
+    - name: ${username}
+      password: ${user_password}
+      type: text
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - qemu-guest-agent
+  - curl
+
+runcmd:
+  # --- k3s (Kubernetes) ---
+  # Wersja przypięta: k3s i AWX podnoś świadomie i osobno, nie przy odtworzeniu VM.
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.3+k3s3 sh -
+  # PL: Udostępnij kubeconfig użytkownikowi (domyślnie tylko root go czyta).
+  # EN: Make the kubeconfig readable by the user (root-only by default).
+  - install -d -m 0755 /home/${username}/.kube
+  - cp /etc/rancher/k3s/k3s.yaml /home/${username}/.kube/config
+  - chown -R ${username}:${username} /home/${username}/.kube
+  # PL: Wdrożenie AWX (po starcie, z hosta lub Ansiblem):
+  #       scp -r awx-operator ${username}@<ip>:~/   # lub git clone
+  #       kubectl apply -k ~/awx-operator
+  # EN: Deploy AWX afterwards (from host or via Ansible):
+  #       scp -r awx-operator ${username}@<ip>:~/   # or git clone
+  #       kubectl apply -k ~/awx-operator
+
+final_message: "cloud-init OK - k3s gotowy na ${hostname}.${domain}; wdróż AWX z awx-operator / k3s ready; deploy AWX with awx-operator."

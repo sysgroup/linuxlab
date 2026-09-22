@@ -1,0 +1,70 @@
+#cloud-config
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# ============================================================================
+#  desktop.yaml.tftpl  -  profil "desktop" / Kubuntu + VS Code + Chrome
+# ----------------------------------------------------------------------------
+#  PL: Stacja robocza: pulpit KDE, VS Code, Google Chrome, Ansible. Instalacja
+#      pulpitu trwa (spore pobieranie) - VM zrestartuje się raz, gdy będzie gotowa.
+#  EN: Dev workstation: KDE desktop, VS Code, Google Chrome, Ansible. Desktop
+#      install is large - the VM reboots once when ready.
+# ============================================================================
+
+hostname: ${hostname}
+fqdn: ${hostname}.${domain}
+
+ssh_pwauth: true
+
+users:
+  - name: ${username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+chpasswd:
+  expire: false
+  users:
+    - name: ${username}
+      password: ${user_password}
+      type: text
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ansible
+  - qemu-guest-agent
+  - curl
+  - gnupg
+  - apt-transport-https
+  - software-properties-common
+
+# PL: Dokładamy repozytoria Microsoftu (VS Code) i Google (Chrome), potem KDE.
+# EN: Add Microsoft (VS Code) and Google (Chrome) repos, then install KDE.
+runcmd:
+  - install -d -m 0755 /etc/apt/keyrings
+
+  # --- VS Code (oficjalne repo Microsoftu / Microsoft's official repo) ---
+  - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
+  - echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list
+
+  # --- Google Chrome (oficjalne repo Google / Google's official repo) ---
+  - curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google.gpg
+  - echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google.gpg] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+
+  - apt-get update
+
+  # --- Pulpit Kubuntu (KDE) + aplikacje / KDE desktop + apps ---
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y kubuntu-desktop code google-chrome-stable
+
+  - systemctl set-default graphical.target
+  - systemctl enable sddm
+
+  # PL: Reboot raz, by wejść w GUI (plik-znacznik chroni przed pętlą).
+  # EN: Reboot once into the GUI (marker file prevents a loop).
+  - test -f /var/lib/cloud-desktop-installed || (touch /var/lib/cloud-desktop-installed && reboot)
+
+final_message: "cloud-init OK - pulpit KDE instaluje się w tle, potem reboot / KDE installs in background, then reboots."

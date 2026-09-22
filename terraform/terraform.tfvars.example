@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+# ============================================================================
+#  terraform.tfvars.example
+# ----------------------------------------------------------------------------
+#  PL: Skopiuj do "terraform.tfvars" i dostosuj. Plik terraform.tfvars jest
+#      czytany automatycznie i NADPISUJE wartości domyślne z variables.tf.
+#          cp terraform.tfvars.example terraform.tfvars
+#      terraform.tfvars jest w .gitignore (może zawierać hasło).
+#  EN: Copy to "terraform.tfvars" and adjust. terraform.tfvars is read
+#      automatically and OVERRIDES defaults from variables.tf. It is gitignored
+#      (it may contain a password).
+# ============================================================================
+
+# PL: Ścieżka do TWOJEGO publicznego klucza SSH (domyślnie już ustawiona).
+# EN: Path to YOUR public SSH key (default already set).
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# PL: Konto administracyjne tworzone w każdej VM.
+# EN: Admin account created in every VM.
+username = "admin"
+
+# PL: Hasło do konsoli/GUI - ZMIEŃ i traktuj jak sekret.
+# EN: Console/GUI password - CHANGE it and treat as a secret.
+# user_password = "twoje-haslo"
+
+# --- Opcjonalnie / optional -------------------------------------------------
+# lab_network_cidr = "192.168.123.0/24"
+# vm_pool          = "images"
+
+# PL: Możesz nadpisać CAŁĄ mapę vms, ale zwykle wygodniej edytować domyślną
+#     mapę w variables.tf. Przykład zmiany pojedynczych pól przez -var:
+#       terraform apply -var='vms={ deb13 = { group="testdeb", profile="base", distro="debian-13", disk_gib=30 } ... }'
+#     (w praktyce: edytuj variables.tf - to jest single source of truth).
+# EN: You can override the WHOLE vms map, but it's usually easier to edit the
+#     default map in variables.tf (the single source of truth).
