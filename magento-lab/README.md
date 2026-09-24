@@ -21,24 +21,26 @@ zainstalowane wersje w `/etc/magento-lab/versions.txt`.
 | Magento Open Source | `2.4.9`, tag GitHub na commicie `755e34dd689021c5165db9d35ecff74f7dc51527` | `2.4.9` było wydaniem oznaczonym przez GitHub jako Latest. |
 | Ubuntu | `26.04 LTS` | Bieżący obraz Ubuntu Server: `26.04.1 LTS`; playbook wymaga dokładnie serii `26.04` x86-64. |
 | PHP | runtime `8.5.4`, pakiet `8.5.4-0ubuntu1.3` | Najnowszy opublikowany patch serii PHP 8.5: `8.5.10`; nie jest to to samo co pakiet Ubuntu użyty w VM. |
-| MySQL | runtime/pakiet `8.4.11-0ubuntu0.26.04.1` | Magento wymaga szeregu MySQL `8.4`; wersja pakietu jest odczytywana po instalacji. |
+| MySQL | runtime/pakiet `8.4.11-0ubuntu0.26.04.1` | Magento wymaga szeregu MySQL `8.4`; upstream opublikował `8.4.12`, co nie jest deklaracją wersji pakietu Ubuntu. |
 | OpenSearch | `3.8.0`, SHA-512 przypięte w playbooku | `3.8.0` było najnowszym wpisem w oficjalnej historii wydań. |
 | Composer | `2.10.3`, SHA-256 `7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6` | `2.10.3` było aktualnym stabilnym wydaniem. |
 | nginx | runtime `1.30.5`, pakiet `1.30.5-1~resolute` | stable: `1.30.5`; równolegle mainline: `1.31.6`. Playbook sprawdza serię `1.30`. |
-| Kontroler Ansible | Ansible Core `2.21.3` | Wersja użyta do syntax check, lint i testu integracyjnego. |
+| Kontroler Ansible | Ansible Core `2.21.3` | Wersja użyta do syntax check, lint i testu integracyjnego; [Ansible Core `2.21.4`](https://github.com/ansible/ansible/releases/tag/v2.21.4) było wydaniem Latest producenta. |
 
 Źródła: [macierz Adobe 2.4.9](https://experienceleague.adobe.com/en/docs/commerce-operations/installation-guide/system-requirements),
 [release Magento 2.4.9](https://github.com/magento/magento2/releases/tag/2.4.9),
 [PHP releases](https://www.php.net/releases/),
 [pakiet PHP Ubuntu 26.04](https://packages.ubuntu.com/resolute/php8.5-cli),
 [pakiet MySQL Ubuntu 26.04](https://packages.ubuntu.com/resolute/mysql-server),
+[MySQL 8.4.12](https://dev.mysql.com/doc/relnotes/mysql/8.4/en/news-8-4-12.html),
 [historia OpenSearch](https://docs.opensearch.org/latest/version-history/),
 [Composer 2.10.3](https://github.com/composer/composer/releases/tag/2.10.3),
 [nginx downloads](https://nginx.org/en/download.html),
 [pakiet nginx dla Ubuntu](https://nginx.org/packages/ubuntu/pool/nginx/n/nginx/) i
-[Ubuntu Server](https://ubuntu.com/download/server).
+[Ubuntu Server](https://ubuntu.com/download/server),
+[Ansible Core 2.21.4](https://github.com/ansible/ansible/releases/tag/v2.21.4).
 
-OpenSearch wymienia w swojej aktualnej tabeli testowanych systemów Ubuntu
+Na 2026-09-24 OpenSearch wymienia w swojej tabeli testowanych systemów Ubuntu
 `24.04`, nie `26.04`. Ten zestaw działał funkcjonalnie na osobnej VM Ubuntu
 26.04, ale nie należy przedstawiać tego jako certyfikowanej pary producenta.
 Zobacz [compatible operating systems](https://docs.opensearch.org/latest/install-and-configure/os-comp/).

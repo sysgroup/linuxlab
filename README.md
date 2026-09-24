@@ -12,7 +12,7 @@ z dokumentacji.
 | [`power-probe/`](power-probe/) | Odczyt poboru mocy maszyny ze wszystkich dostępnych w Linuksie źródeł (IPMI, DCMI, hwmon, RAPL, bateria) wraz z zakresem, jaki obejmuje każde z nich. W README: co który interfejs mierzy, na jakim sprzęcie działa i czego nie da się odczytać; testy działają bez dostępu do sprzętu. |
 | [`terraform/`](terraform/) | Lab KVM opisany w Terraform: jedenaście maszyn (Debian, Ubuntu, pulpit, Proxmox Backup Server, k3s, Docker) w trzech warstwach, z cloud-init i poprawkami XML domen. Sprawdzony na Debianie 13 z libvirt 11.3. |
 | [`ansible-pld/`](ansible-pld/) | Playbooki Ansible dla PLD Linux Th z systemd: profil pakietów instalowany przez Poldek, hardening (SSH, sysctl, fail2ban, auditd) i monitoring przez NRPE (Nagios Remote Plugin Executor). Dokumentacja po angielsku. Sprawdzone na PLD Th 3.0. |
-| [`magento-lab/`](magento-lab/) | Samodzielny playbook Ansible dla świeżej, izolowanej VM Magento Open Source 2.4.9 na Ubuntu 26.04: PHP 8.5, MySQL 8.4, OpenSearch 3.8.0, Composer 2.10.3 i nginx 1.30.5. Snapshot wersji: 2026-09-24. |
+| [`magento-lab/`](magento-lab/) | Samodzielny playbook Ansible dla świeżej, izolowanej VM Magento Open Source 2.4.9 na Ubuntu 26.04: PHP 8.5.4, MySQL 8.4.11, OpenSearch 3.8.0, Composer 2.10.3 i nginx 1.30.5. Snapshot wersji: 2026-09-24. |
 
 ## Wymagania
 
@@ -20,8 +20,9 @@ power-probe: Python 3.7 lub nowszy, bez zewnętrznych bibliotek. Liczniki RAPL
 i IPMI zwykle wymagają uprawnień roota. Lab: libvirt z KVM oraz Terraform albo OpenTofu -
 szczegóły w [`terraform/README.md`](terraform/README.md). PLD: Ansible z kolekcją
 `community.general` - szczegóły w [`ansible-pld/README.md`](ansible-pld/README.md).
-Magento: Ansible Core 2.21.3, świeża VM Ubuntu 26.04 x86-64 oraz dostęp HTTPS;
-pełne wymagania i ograniczenia są w [`magento-lab/README.md`](magento-lab/README.md).
+Magento: Ansible Core 2.21.3 (test; producent oznaczał 2.21.4 jako Latest
+24.09.2026), świeża VM Ubuntu 26.04 x86-64 oraz dostęp HTTPS; pełne wymagania,
+wersje i ograniczenia są w [`magento-lab/README.md`](magento-lab/README.md).
 
 ## Szybki start
 
