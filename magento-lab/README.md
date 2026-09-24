@@ -1,4 +1,4 @@
-# Magento Open Source 2.4.9 — testowa VM na Ubuntu 26.04
+# Magento Open Source 2.4.9: testowa VM na Ubuntu 26.04
 
 To samodzielny playbook Ansible dla świeżej, dedykowanej VM testowej. Instaluje
 Magento Open Source z publicznego GitHuba, PHP-FPM, nginx, MySQL, OpenSearch,
@@ -82,6 +82,16 @@ Jeżeli grupa ma inną nazwę, użyj `-e target_hosts=nazwa_grupy`. Prywatne
 inventory jest ignorowane przez Git; kontrola klucza hosta SSH pozostaje
 włączona.
 
+Wartości domyślne (wersje, sumy kontrolne, ścieżki, nazwa serwera) są w
+`group_vars/all.yml` obok playbooka, a nie w bloku `vars:` playa. Zmienne
+playa mają w Ansible pierwszeństwo przed zmiennymi hosta z inventory, więc
+`magento_server_name` z `inventory/local.yml` byłoby po cichu ignorowane.
+Nadpisuj wartości w zmiennych hosta, jak w `inventory/local.example.yml`,
+albo przez `-e`. Zadziała też plik `inventory/group_vars/magento_lab.yml`.
+Nie zadziałają natomiast zmienne grupy wpisane w samym pliku inventory ani
+`inventory/group_vars/all.yml`: mają niższe pierwszeństwo niż
+`group_vars/all.yml` playbooka (sprawdzone `ansible-inventory --playbook-dir`).
+
 Po udanym pierwszym przebiegu VM przechowuje hasła tylko dla roota:
 
 ```bash
@@ -100,15 +110,23 @@ bez `env.php` i utraconego hasła bazy zainstalowanego sklepu.
 
 ### Zapis testu
 
-24 września 2026 r. publiczny playbook wykonano na opisanej VM z Ansible Core
-`2.21.3`: pełna konwergencja zakończyła się `ok=70 changed=12 failed=0`, a
-natychmiastowy drugi przebieg `ok=70 changed=0 failed=0`. Test sprawdził
-wersje z tabeli, aktywność `nginx`, `php8.5-fpm`, `mysql`, `opensearch` i
-`cron`, loopback dla MySQL/OpenSearch, `setup:db:status`, ustawienie
-`catalog/search/engine=opensearch` oraz HTTP 200. Źródło Magento i pierwsza
-instalacja VM były uprzednio wykonane tą samą publiczną ścieżką GitHub/tag/
-lockfile; ten test nie kasował działającego sklepu tylko po to, by powtórzyć
-`setup:install`.
+24 września 2026 r. publiczny playbook wykonano z Ansible Core `2.21.3` na
+świeżej VM Ubuntu 26.04 LTS (jądro `7.0.0-28-generic`, 4 vCPU, 16 GiB RAM,
+80 GiB dysku), utworzonej tylko do tego testu z obrazu chmurowego, z
+inventory zbudowanym według `inventory/local.example.yml`
+(`magento_server_name: magento-lab.example.test`):
+
+| Przebieg | Wynik | Czas |
+| --- | --- | --- |
+| pierwszy, pełna instalacja | `ok=82 changed=33 failed=0 skipped=4` | 17 min 22 s |
+| drugi, bezpośrednio po pierwszym | `ok=70 changed=0 failed=0 skipped=16` | 1 min 22 s |
+
+Test sprawdził wersje z tabeli, aktywność `nginx`, `php8.5-fpm`, `mysql`,
+`opensearch` i `cron`, loopback dla MySQL/OpenSearch, `setup:db:status`,
+ustawienie `catalog/search/engine=opensearch`, nazwę z inventory w vhoście
+nginx i w adresie bazowym Magento oraz HTTP 200 bez przekierowania. Pliki
+statyczne (CSS i JS) zwracały 200: pierwsze żądanie obsłużył `static.php`,
+kolejne nginx bezpośrednio z `pub/static`, a log błędów nginx pozostał pusty.
 
 ## Magento z GitHub bez kluczy Marketplace
 

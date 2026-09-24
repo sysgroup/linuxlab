@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+# Default values for magento-lab.yml. They live in playbook group_vars, not in
+# the play `vars:` block, because play vars take precedence over inventory host
+# variables. Override them per host in the inventory (see
+# inventory/local.example.yml) or with --extra-vars.
+magento_version_snapshot_date: "2026-09-24"
+magento_version: "2.4.9"
+magento_source_repository: https://github.com/magento/magento2.git
+magento_source_ref: "2.4.9"
+magento_source_commit: "755e34dd689021c5165db9d35ecff74f7dc51527"
+
+magento_supported_distribution: Ubuntu
+magento_supported_distribution_version: "26.04"
+magento_php_series: "8.5"
+magento_mysql_series: "8.4"
+magento_opensearch_version: "3.8.0"
+magento_composer_version: "2.10.3"
+magento_composer_sha256: "7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6"
+magento_nginx_series: "1.30"
+
+magento_nginx_repo_url: https://nginx.org/packages/ubuntu
+magento_nginx_repo_suite: resolute
+magento_nginx_key_url: https://nginx.org/keys/nginx_signing.key
+magento_nginx_key_path: /etc/apt/keyrings/nginx-signing-key.asc
+
+magento_root: /srv/magento
+magento_user: magento
+magento_group: magento
+magento_home: /var/lib/magento
+magento_server_name: magento-lab.test
+magento_base_url: "http://{{ magento_server_name }}/"
+magento_http_port: 80
+magento_fpm_pool_conf: "/etc/php/{{ magento_php_series }}/fpm/pool.d/90-magento-lab.conf"
+
+magento_admin_user: lab-admin
+magento_admin_firstname: Magento
+magento_admin_lastname: Lab
+magento_admin_email: admin@magento-lab.test
+magento_admin_frontname: admin
+magento_timezone: Europe/Warsaw
+
+magento_mysql_database: magento
+magento_mysql_user: magento
+magento_mysql_config: /etc/mysql/mysql.conf.d/99-magento-lab.cnf
+
+magento_opensearch_deb: "opensearch-{{ magento_opensearch_version }}-linux-x64.deb"
+magento_opensearch_url: >-
+  https://artifacts.opensearch.org/releases/bundle/opensearch/{{ magento_opensearch_version }}/{{ magento_opensearch_deb }}
+magento_opensearch_sha512: >-
+  {{ [
+    '78889f65d7203855fc3ae1f75d65f96b5ebb0c10591317cc4c4887067586a3d3',
+    'ea0215d15c26c421b71c4648b9914fdd04ee1a77f796e18388453a9d71812b04'
+  ] | join('') }}
+magento_opensearch_cache_dir: /var/cache/magento-lab
+magento_opensearch_heap: 2g
+magento_opensearch_port: 9200
+magento_opensearch_index_prefix: magento_lab
+magento_opensearch_node_name: magento-lab
+
+magento_php_memory_limit: 3G
+magento_php_max_execution_time: 1800
+magento_php_realpath_cache_size: 10M
+magento_php_realpath_cache_ttl: 7200
+
+magento_secrets_dir: /etc/magento-lab/secrets
+magento_versions_file: /etc/magento-lab/versions.txt
+magento_base_packages:
+  - acl
+  - ca-certificates
+  - cron
+  - curl
+  - git
+  - gnupg
+  - mysql-client
+  - mysql-server
+  - openssl
+  - php8.5-bcmath
+  - php8.5-cli
+  - php8.5-common
+  - php8.5-curl
+  - php8.5-fpm
+  - php8.5-gd
+  - php8.5-intl
+  - php8.5-mbstring
+  - php8.5-mysql
+  - php8.5-readline
+  - php8.5-soap
+  - php8.5-xml
+  - php8.5-xsl
+  - php8.5-zip
+  - python3-debian
+  - unzip
