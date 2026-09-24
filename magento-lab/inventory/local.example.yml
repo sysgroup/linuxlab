@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+all:
+  children:
+    magento_lab:
+      hosts:
+        magento-lab.example.test:
+          ansible_host: 192.0.2.10
+          ansible_user: ubuntu
+          magento_server_name: magento-lab.example.test
+          magento_base_url: http://magento-lab.example.test/

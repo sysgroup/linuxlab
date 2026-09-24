@@ -1,0 +1,8 @@
+cluster.name: magento-lab
+node.name: {{ magento_opensearch_node_name }}
+path.data: /var/lib/opensearch
+path.logs: /var/log/opensearch
+network.host: 127.0.0.1
+http.port: {{ magento_opensearch_port }}
+discovery.type: single-node
+plugins.security.disabled: true

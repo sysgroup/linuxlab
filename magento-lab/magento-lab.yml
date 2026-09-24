@@ -1,0 +1,875 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 SysGroup Sp. z o.o.
+---
+- name: Provision a Magento Open Source test VM
+  hosts: "{{ target_hosts | default('magento_lab') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    magento_version_snapshot_date: "2026-09-24"
+    magento_version: "2.4.9"
+    magento_source_repository: https://github.com/magento/magento2.git
+    magento_source_ref: "2.4.9"
+    magento_source_commit: "755e34dd689021c5165db9d35ecff74f7dc51527"
+
+    magento_supported_distribution: Ubuntu
+    magento_supported_distribution_version: "26.04"
+    magento_php_series: "8.5"
+    magento_mysql_series: "8.4"
+    magento_opensearch_version: "3.8.0"
+    magento_composer_version: "2.10.3"
+    magento_composer_sha256: "7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6"
+    magento_nginx_series: "1.30"
+
+    magento_nginx_repo_url: https://nginx.org/packages/ubuntu
+    magento_nginx_repo_suite: resolute
+    magento_nginx_key_url: https://nginx.org/keys/nginx_signing.key
+    magento_nginx_key_path: /etc/apt/keyrings/nginx-signing-key.asc
+
+    magento_root: /srv/magento
+    magento_user: magento
+    magento_group: magento
+    magento_home: /var/lib/magento
+    magento_server_name: magento-lab.test
+    magento_base_url: "http://{{ magento_server_name }}/"
+    magento_http_port: 80
+    magento_fpm_pool_conf: "/etc/php/{{ magento_php_series }}/fpm/pool.d/90-magento-lab.conf"
+
+    magento_admin_user: lab-admin
+    magento_admin_firstname: Magento
+    magento_admin_lastname: Lab
+    magento_admin_email: admin@magento-lab.test
+    magento_admin_frontname: admin
+    magento_timezone: Europe/Warsaw
+
+    magento_mysql_database: magento
+    magento_mysql_user: magento
+    magento_mysql_config: /etc/mysql/mysql.conf.d/99-magento-lab.cnf
+
+    magento_opensearch_deb: "opensearch-{{ magento_opensearch_version }}-linux-x64.deb"
+    magento_opensearch_url: >-
+      https://artifacts.opensearch.org/releases/bundle/opensearch/{{ magento_opensearch_version }}/{{ magento_opensearch_deb }}
+    magento_opensearch_sha512: >-
+      {{ [
+        '78889f65d7203855fc3ae1f75d65f96b5ebb0c10591317cc4c4887067586a3d3',
+        'ea0215d15c26c421b71c4648b9914fdd04ee1a77f796e18388453a9d71812b04'
+      ] | join('') }}
+    magento_opensearch_cache_dir: /var/cache/magento-lab
+    magento_opensearch_heap: 2g
+    magento_opensearch_port: 9200
+    magento_opensearch_index_prefix: magento_lab
+    magento_opensearch_node_name: magento-lab
+
+    magento_php_memory_limit: 3G
+    magento_php_max_execution_time: 1800
+    magento_php_realpath_cache_size: 10M
+    magento_php_realpath_cache_ttl: 7200
+
+    magento_secrets_dir: /etc/magento-lab/secrets
+    magento_versions_file: /etc/magento-lab/versions.txt
+    magento_base_packages:
+      - acl
+      - ca-certificates
+      - cron
+      - curl
+      - git
+      - gnupg
+      - mysql-client
+      - mysql-server
+      - openssl
+      - php8.5-bcmath
+      - php8.5-cli
+      - php8.5-common
+      - php8.5-curl
+      - php8.5-fpm
+      - php8.5-gd
+      - php8.5-intl
+      - php8.5-mbstring
+      - php8.5-mysql
+      - php8.5-readline
+      - php8.5-soap
+      - php8.5-xml
+      - php8.5-xsl
+      - php8.5-zip
+      - python3-debian
+      - unzip
+
+  pre_tasks:
+    - name: Require the tested Ubuntu release and architecture
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == magento_supported_distribution
+          - ansible_facts['distribution_version'] == magento_supported_distribution_version
+          - ansible_facts['architecture'] == 'x86_64'
+        fail_msg: >-
+          This playbook is pinned to Ubuntu 26.04 x86_64, whose native PHP 8.5
+          and MySQL 8.4 packages match the Magento 2.4.9 test matrix.
+        quiet: true
+
+    - name: Require safe names for rendered service configuration
+      ansible.builtin.assert:
+        that:
+          - magento_server_name is match('^[A-Za-z0-9.-]+$')
+          - magento_mysql_database is match('^[A-Za-z0-9_]+$')
+          - magento_mysql_user is match('^[A-Za-z0-9_]+$')
+        fail_msg: >-
+          magento_server_name, magento_mysql_database and magento_mysql_user
+          are inserted into configuration or SQL and must use safe names.
+        quiet: true
+
+  tasks:
+    - name: Install base packages without starting unfinished services
+      ansible.builtin.apt:
+        name: "{{ magento_base_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        policy_rc_d: 101
+
+    - name: Create the APT keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the Nginx signing key
+      ansible.builtin.get_url:
+        url: "{{ magento_nginx_key_url }}"
+        dest: "{{ magento_nginx_key_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        force: false
+
+    - name: Configure the Nginx stable package source
+      ansible.builtin.deb822_repository:
+        name: nginx-org
+        types: [deb]
+        uris: ["{{ magento_nginx_repo_url }}"]
+        suites: ["{{ magento_nginx_repo_suite }}"]
+        components: [nginx]
+        signed_by: "{{ magento_nginx_key_path }}"
+        mode: "0644"
+        state: present
+
+    - name: Install Nginx without starting its placeholder server
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+        policy_rc_d: 101
+
+    - name: Start cron after its guarded package installation
+      ansible.builtin.systemd:
+        name: cron
+        state: started
+        enabled: true
+
+    - name: Create the Magento service group
+      ansible.builtin.group:
+        name: "{{ magento_group }}"
+        system: true
+        state: present
+
+    - name: Inspect an existing Magento service account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ magento_user }}"
+        fail_key: false
+
+    - name: Create the Magento service account
+      ansible.builtin.user:
+        name: "{{ magento_user }}"
+        group: "{{ magento_group }}"
+        home: "{{ magento_home }}"
+        create_home: true
+        shell: /usr/sbin/nologin
+        system: true
+        state: present
+      when: magento_user not in (ansible_facts.getent_passwd | default({}))
+
+    - name: Read the primary group of an existing Magento service account
+      ansible.builtin.command:
+        argv: [id, -gn, "{{ magento_user }}"]
+      register: _magento_service_user_group
+      changed_when: false
+      when: magento_user in (ansible_facts.getent_passwd | default({}))
+
+    - name: Require an existing Magento service account to match this lab
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.getent_passwd[magento_user][4] == magento_home
+          - ansible_facts.getent_passwd[magento_user][5] == '/usr/sbin/nologin'
+          - _magento_service_user_group.stdout | trim == magento_group
+        fail_msg: >-
+          Existing account {{ magento_user }} has a different home, shell or
+          primary group. Stop its services and migrate it explicitly, or set
+          matching variables before using this dedicated-VM playbook.
+        quiet: true
+      when: magento_user in (ansible_facts.getent_passwd | default({}))
+
+    - name: Set Magento home permissions
+      ansible.builtin.file:
+        path: "{{ magento_home }}"
+        state: directory
+        owner: "{{ magento_user }}"
+        group: "{{ magento_group }}"
+        mode: "0750"
+
+    - name: Configure matching PHP CLI and FPM settings
+      ansible.builtin.template:
+        src: php-magento.ini.j2
+        dest: "/etc/php/{{ magento_php_series }}/{{ item }}/conf.d/99-magento-lab.ini"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [cli, fpm]
+      register: _magento_php_ini
+
+    - name: Configure the dedicated Magento PHP-FPM pool
+      ansible.builtin.template:
+        src: php-fpm-magento.conf.j2
+        dest: "{{ magento_fpm_pool_conf }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: _magento_php_pool
+
+    - name: Remove the unused stock PHP-FPM pool
+      ansible.builtin.file:
+        path: "/etc/php/{{ magento_php_series }}/fpm/pool.d/www.conf"
+        state: absent
+      register: _magento_php_stock_pool
+
+    - name: Validate the final PHP-FPM configuration
+      ansible.builtin.command:
+        argv: ["php-fpm{{ magento_php_series }}", -t]
+      changed_when: false
+
+    - name: Enable PHP-FPM with the Magento configuration
+      ansible.builtin.systemd:
+        name: "php{{ magento_php_series }}-fpm"
+        state: >-
+          {{ 'restarted' if (_magento_php_ini.changed or _magento_php_pool.changed or _magento_php_stock_pool.changed) else 'started' }}
+        enabled: true
+
+    - name: Configure local-only MySQL for Magento
+      ansible.builtin.template:
+        src: mysql-magento.cnf.j2
+        dest: "{{ magento_mysql_config }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: _magento_mysql_config
+
+    - name: Enable MySQL with the Magento configuration
+      ansible.builtin.systemd:
+        name: mysql
+        state: "{{ 'restarted' if _magento_mysql_config.changed else 'started' }}"
+        enabled: true
+
+    - name: Verify MySQL can create Magento triggers without SUPER
+      ansible.builtin.command:
+        argv:
+          - mysql
+          - --protocol=socket
+          - --user=root
+          - --batch
+          - --skip-column-names
+          - --execute=SELECT @@log_bin_trust_function_creators
+      register: _magento_mysql_trust_function_creators
+      changed_when: false
+
+    - name: Require the MySQL trigger-creator setting
+      ansible.builtin.assert:
+        that:
+          - _magento_mysql_trust_function_creators.stdout | trim == '1'
+        fail_msg: >-
+          MySQL binary logging requires log_bin_trust_function_creators=1 for
+          the local Magento account to create setup triggers on this test VM.
+        quiet: true
+
+    - name: Create the root-only Magento secrets directory
+      ansible.builtin.file:
+        path: "{{ magento_secrets_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Inspect an existing Magento installation before changing credentials
+      ansible.builtin.stat:
+        path: "{{ magento_root }}/app/etc/env.php"
+      register: _magento_installed
+
+    - name: Inspect the local database password
+      ansible.builtin.stat:
+        path: "{{ magento_secrets_dir }}/database-password"
+      register: _magento_db_password_file
+      no_log: true
+
+    - name: Refuse to replace a lost database password of an installed shop
+      ansible.builtin.assert:
+        that:
+          - _magento_db_password_file.stat.exists
+        fail_msg: >-
+          The installed Magento application has no database-password secret at
+          {{ magento_secrets_dir }}. Restore that secret or rotate the database
+          credential and app/etc/env.php together before rerunning this playbook.
+        quiet: true
+      when: _magento_installed.stat.exists
+
+    - name: Generate the local database password once
+      ansible.builtin.command:
+        argv: [openssl, rand, -hex, "32"]
+      register: _magento_db_password_generated
+      changed_when: true
+      when:
+        - not _magento_installed.stat.exists
+        - not _magento_db_password_file.stat.exists
+      no_log: true
+
+    - name: Store the generated database password
+      ansible.builtin.copy:
+        dest: "{{ magento_secrets_dir }}/database-password"
+        content: "{{ _magento_db_password_generated.stdout | trim }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+      when:
+        - not _magento_installed.stat.exists
+        - not _magento_db_password_file.stat.exists
+      no_log: true
+
+    - name: Read the local database password
+      ansible.builtin.slurp:
+        src: "{{ magento_secrets_dir }}/database-password"
+      register: _magento_db_password_raw
+      no_log: true
+
+    - name: Hold the local database password privately
+      ansible.builtin.set_fact:
+        _magento_db_password: "{{ _magento_db_password_raw.content | b64decode | trim }}"
+      no_log: true
+
+    - name: Create the local Magento database and user
+      ansible.builtin.command:
+        argv: [mysql, --protocol=socket, --user=root]
+        stdin: |
+          CREATE DATABASE IF NOT EXISTS `{{ magento_mysql_database }}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+          CREATE USER IF NOT EXISTS '{{ magento_mysql_user }}'@'localhost' IDENTIFIED BY '{{ _magento_db_password }}';
+          ALTER USER '{{ magento_mysql_user }}'@'localhost' IDENTIFIED BY '{{ _magento_db_password }}';
+          GRANT ALL PRIVILEGES ON `{{ magento_mysql_database }}`.* TO '{{ magento_mysql_user }}'@'localhost';
+          FLUSH PRIVILEGES;
+      changed_when: false
+      no_log: true
+
+    - name: Create the OpenSearch package cache directory
+      ansible.builtin.file:
+        path: "{{ magento_opensearch_cache_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download the pinned OpenSearch package
+      ansible.builtin.get_url:
+        url: "{{ magento_opensearch_url }}"
+        dest: "{{ magento_opensearch_cache_dir }}/{{ magento_opensearch_deb }}"
+        checksum: "sha512:{{ magento_opensearch_sha512 }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install OpenSearch without its demo configuration
+      ansible.builtin.apt:
+        deb: "{{ magento_opensearch_cache_dir }}/{{ magento_opensearch_deb }}"
+        state: present
+        policy_rc_d: 101
+      environment:
+        DISABLE_INSTALL_DEMO_CONFIG: "true"
+        DISABLE_SECURITY_PLUGIN: "true"
+
+    - name: Persist the OpenSearch kernel prerequisite
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/60-magento-opensearch.conf
+        content: "vm.max_map_count = 262144\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Read the current OpenSearch kernel prerequisite
+      ansible.builtin.command:
+        argv: [sysctl, -n, vm.max_map_count]
+      register: _magento_vm_max_map_count
+      changed_when: false
+
+    - name: Apply the OpenSearch kernel prerequisite
+      ansible.builtin.command:
+        argv: [sysctl, -w, vm.max_map_count=262144]
+      when: _magento_vm_max_map_count.stdout | trim != '262144'
+      changed_when: true
+
+    - name: Configure local single-node OpenSearch
+      ansible.builtin.template:
+        src: opensearch.yml.j2
+        dest: /etc/opensearch/opensearch.yml
+        owner: root
+        group: opensearch
+        mode: "0640"
+      register: _magento_opensearch_config
+
+    - name: Configure the OpenSearch JVM heap
+      ansible.builtin.copy:
+        dest: /etc/opensearch/jvm.options.d/99-magento-lab.options
+        content: |-
+          -Xms{{ magento_opensearch_heap }}
+          -Xmx{{ magento_opensearch_heap }}
+        owner: root
+        group: opensearch
+        mode: "0640"
+      register: _magento_opensearch_jvm
+
+    - name: Enable local OpenSearch
+      ansible.builtin.systemd:
+        name: opensearch
+        state: >-
+          {{ 'restarted' if (_magento_opensearch_config.changed or _magento_opensearch_jvm.changed) else 'started' }}
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for the expected OpenSearch version
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ magento_opensearch_port }}/"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: _magento_opensearch_info
+      retries: 18
+      delay: 5
+      until:
+        - _magento_opensearch_info.status | default(0) == 200
+        - >-
+          (_magento_opensearch_info.json | default({})).get('version', {}).get('number', '')
+          == magento_opensearch_version
+
+    - name: Install the pinned Composer executable
+      ansible.builtin.get_url:
+        url: "https://getcomposer.org/download/{{ magento_composer_version }}/composer.phar"
+        dest: /usr/local/bin/composer
+        checksum: "sha256:{{ magento_composer_sha256 }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create the Magento application parent directory
+      ansible.builtin.file:
+        path: "{{ magento_root | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Reserve the Magento application directory
+      ansible.builtin.file:
+        path: "{{ magento_root }}"
+        state: directory
+        owner: "{{ magento_user }}"
+        group: "{{ magento_group }}"
+        mode: "0755"
+
+    - name: Inspect the Magento Git checkout
+      ansible.builtin.stat:
+        path: "{{ magento_root }}/.git"
+      register: _magento_git_checkout
+
+    - name: List an uninitialized Magento directory
+      ansible.builtin.command:
+        argv:
+          - find
+          - "{{ magento_root }}"
+          - -mindepth
+          - "1"
+          - -maxdepth
+          - "1"
+          - -printf
+          - "%f\\n"
+      register: _magento_root_entries
+      changed_when: false
+      when: not _magento_git_checkout.stat.exists
+
+    - name: Refuse to overwrite a non-Git Magento directory
+      ansible.builtin.assert:
+        that:
+          - _magento_root_entries.stdout_lines | length == 0
+        fail_msg: >-
+          {{ magento_root }} is non-empty but is not a Git checkout. Inspect or
+          move it explicitly; this playbook will not overwrite it.
+        quiet: true
+      when: not _magento_git_checkout.stat.exists
+
+    - name: Clone the public Magento Open Source release tag
+      ansible.builtin.git:
+        repo: "{{ magento_source_repository }}"
+        dest: "{{ magento_root }}"
+        version: "{{ magento_source_ref }}"
+        depth: 1
+        single_branch: true
+        update: false
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      when: not _magento_git_checkout.stat.exists
+
+    - name: Verify the Magento source tree exists
+      ansible.builtin.stat:
+        path: "{{ magento_root }}/bin/magento"
+      register: _magento_source
+
+    - name: Require a complete Magento source tree
+      ansible.builtin.assert:
+        that:
+          - _magento_source.stat.exists
+        fail_msg: "{{ magento_root }} has no Magento bin/magento executable."
+        quiet: true
+
+    - name: Read the Magento source revision
+      ansible.builtin.command:
+        argv: [git, -C, "{{ magento_root }}", rev-parse, HEAD]
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      register: _magento_source_revision
+      changed_when: false
+
+    - name: Require the pinned Magento release revision
+      ansible.builtin.assert:
+        that:
+          - _magento_source_revision.stdout == magento_source_commit
+        fail_msg: >-
+          {{ magento_root }} is at {{ _magento_source_revision.stdout }}, not
+          Magento {{ magento_version }} commit {{ magento_source_commit }}.
+        quiet: true
+
+    - name: Inspect the Composer dependency installation
+      ansible.builtin.stat:
+        path: "{{ magento_root }}/vendor/autoload.php"
+      register: _magento_composer_autoload
+
+    - name: Install the locked public Composer dependencies
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/composer
+          - install
+          - --no-dev
+          - --no-interaction
+          - --no-progress
+          - --prefer-source
+          - --optimize-autoloader
+      args:
+        chdir: "{{ magento_root }}"
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+        COMPOSER_PROCESS_TIMEOUT: "1800"
+      when: not _magento_composer_autoload.stat.exists
+      changed_when: true
+
+    - name: Count Magento tables before a first installation
+      ansible.builtin.command:
+        argv:
+          - mysql
+          - --protocol=socket
+          - --user=root
+          - --batch
+          - --skip-column-names
+          - "--execute=SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{{ magento_mysql_database }}'"
+      register: _magento_table_count
+      changed_when: false
+      when: not _magento_installed.stat.exists
+
+    - name: Refuse to overwrite a partially installed Magento database
+      ansible.builtin.assert:
+        that:
+          - _magento_table_count.stdout | trim | int == 0
+        fail_msg: >-
+          {{ magento_mysql_database }} already contains tables but app/etc/env.php
+          is absent. Inspect or restore the partial installation before retrying.
+        quiet: true
+      when: not _magento_installed.stat.exists
+
+    - name: Inspect the administrator password for a first installation
+      ansible.builtin.stat:
+        path: "{{ magento_secrets_dir }}/administrator-password"
+      register: _magento_admin_password_file
+      when: not _magento_installed.stat.exists
+      no_log: true
+
+    - name: Generate the administrator password once
+      ansible.builtin.command:
+        argv: [openssl, rand, -hex, "32"]
+      register: _magento_admin_password_generated
+      changed_when: true
+      when:
+        - not _magento_installed.stat.exists
+        - not _magento_admin_password_file.stat.exists
+      no_log: true
+
+    - name: Store the generated administrator password
+      ansible.builtin.copy:
+        dest: "{{ magento_secrets_dir }}/administrator-password"
+        content: "A1a{{ _magento_admin_password_generated.stdout | trim }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+      when:
+        - not _magento_installed.stat.exists
+        - not _magento_admin_password_file.stat.exists
+      no_log: true
+
+    - name: Read the administrator password for first installation
+      ansible.builtin.slurp:
+        src: "{{ magento_secrets_dir }}/administrator-password"
+      register: _magento_admin_password_raw
+      when: not _magento_installed.stat.exists
+      no_log: true
+
+    - name: Hold the administrator password privately
+      ansible.builtin.set_fact:
+        _magento_admin_password: "{{ _magento_admin_password_raw.content | b64decode | trim }}"
+      when: not _magento_installed.stat.exists
+      no_log: true
+
+    - name: Run the Magento setup installer
+      ansible.builtin.command:
+        argv:
+          - "{{ magento_root }}/bin/magento"
+          - setup:install
+          - "--base-url={{ magento_base_url }}"
+          - --db-host=localhost
+          - "--db-name={{ magento_mysql_database }}"
+          - "--db-user={{ magento_mysql_user }}"
+          - "--db-password={{ _magento_db_password }}"
+          - "--backend-frontname={{ magento_admin_frontname }}"
+          - "--admin-firstname={{ magento_admin_firstname }}"
+          - "--admin-lastname={{ magento_admin_lastname }}"
+          - "--admin-email={{ magento_admin_email }}"
+          - "--admin-user={{ magento_admin_user }}"
+          - "--admin-password={{ _magento_admin_password }}"
+          - --language=en_US
+          - --currency=PLN
+          - "--timezone={{ magento_timezone }}"
+          - --use-rewrites=1
+          - --search-engine=opensearch
+          - --opensearch-host=127.0.0.1
+          - "--opensearch-port={{ magento_opensearch_port }}"
+          - "--opensearch-index-prefix={{ magento_opensearch_index_prefix }}"
+          - --opensearch-timeout=15
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      when: not _magento_installed.stat.exists
+      changed_when: true
+      no_log: true
+
+    - name: Install Magento cron jobs
+      ansible.builtin.command:
+        argv: ["{{ magento_root }}/bin/magento", cron:install]
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      register: _magento_cron_install
+      changed_when: false
+      failed_when: >-
+        _magento_cron_install.rc != 0 and
+        'Crontab has already been generated and saved' not in
+        (_magento_cron_install.stdout | default(''))
+
+    - name: Remove the Nginx placeholder server
+      ansible.builtin.file:
+        path: /etc/nginx/conf.d/default.conf
+        state: absent
+      register: _magento_nginx_default
+
+    - name: Configure Nginx from the Magento sample
+      ansible.builtin.template:
+        src: nginx-magento.conf.j2
+        dest: /etc/nginx/conf.d/magento-lab.conf
+        owner: root
+        group: root
+        mode: "0644"
+      register: _magento_nginx_vhost
+
+    - name: Validate the complete Nginx configuration
+      ansible.builtin.command:
+        argv: [nginx, -t]
+      changed_when: false
+
+    - name: Enable Nginx with the Magento virtual host
+      ansible.builtin.systemd:
+        name: nginx
+        state: >-
+          {{ 'restarted' if (_magento_nginx_default.changed or _magento_nginx_vhost.changed) else 'started' }}
+        enabled: true
+
+    - name: Read the PHP runtime version
+      ansible.builtin.command:
+        argv: [php, -r, "echo PHP_VERSION;"]
+      register: _magento_php_version_actual
+      changed_when: false
+
+    - name: Read installed PHP extensions
+      ansible.builtin.command:
+        argv: [php, -m]
+      register: _magento_php_extensions
+      changed_when: false
+
+    - name: Require PHP 8.5 and the Magento extensions
+      ansible.builtin.assert:
+        that:
+          - _magento_php_version_actual.stdout is match('^8[.]5[.]')
+          - >-
+            ['bcmath', 'ctype', 'curl', 'dom', 'fileinfo', 'filter', 'ftp', 'gd',
+             'hash', 'iconv', 'intl', 'json', 'libxml', 'mbstring', 'openssl',
+             'pcre', 'pdo_mysql', 'reflection', 'simplexml', 'soap', 'sockets',
+             'sodium', 'spl', 'tokenizer', 'xmlwriter', 'xsl', 'zip', 'zlib']
+            | difference(_magento_php_extensions.stdout_lines | map('lower') | list)
+            | length == 0
+        fail_msg: "PHP does not meet Magento Open Source {{ magento_version }} requirements."
+        quiet: true
+
+    - name: Read the Composer version
+      ansible.builtin.command:
+        argv: [/usr/local/bin/composer, --version, --no-ansi, --no-interaction]
+      register: _magento_composer_version_actual
+      changed_when: false
+
+    - name: Read the MySQL server version
+      ansible.builtin.command:
+        argv:
+          - mysql
+          - --protocol=socket
+          - --batch
+          - --skip-column-names
+          - --execute=SELECT VERSION()
+      register: _magento_mysql_version_actual
+      changed_when: false
+
+    - name: Read the Nginx runtime version
+      ansible.builtin.command:
+        argv: [nginx, -v]
+      register: _magento_nginx_version_actual
+      changed_when: false
+
+    - name: Read exact PHP package version
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, "-f=${Version}", "php{{ magento_php_series }}-cli"]
+      register: _magento_php_package_version
+      changed_when: false
+
+    - name: Read exact MySQL package version
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, "-f=${Version}", mysql-server]
+      register: _magento_mysql_package_version
+      changed_when: false
+
+    - name: Read exact Nginx package version
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, "-f=${Version}", nginx]
+      register: _magento_nginx_package_version
+      changed_when: false
+
+    - name: Require the tested component version series
+      ansible.builtin.assert:
+        that:
+          - _magento_composer_version_actual.stdout is search('Composer version 2[.]10[.]')
+          - _magento_mysql_version_actual.stdout is match('^' ~ magento_mysql_series ~ '[.]')
+          - _magento_nginx_version_actual.stderr is search('nginx/1[.]30[.]')
+          - _magento_opensearch_info.json.version.number == magento_opensearch_version
+        fail_msg: >-
+          A runtime component is outside the tested Magento {{ magento_version }}
+          version matrix.
+        quiet: true
+
+    - name: Read the installed Magento version
+      ansible.builtin.command:
+        argv: ["{{ magento_root }}/bin/magento", --version]
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      register: _magento_application_version_actual
+      changed_when: false
+
+    - name: Require the exact Magento CLI version
+      ansible.builtin.assert:
+        that:
+          - _magento_application_version_actual.stdout == ('Magento CLI ' ~ magento_version)
+        fail_msg: >-
+          Magento CLI reports {{ _magento_application_version_actual.stdout }},
+          not {{ magento_version }}.
+        quiet: true
+
+    - name: Verify the Magento database schema
+      ansible.builtin.command:
+        argv: ["{{ magento_root }}/bin/magento", setup:db:status]
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      changed_when: false
+
+    - name: Verify Magento uses OpenSearch
+      ansible.builtin.command:
+        argv: ["{{ magento_root }}/bin/magento", config:show, catalog/search/engine]
+      become: true
+      become_user: "{{ magento_user }}"
+      environment:
+        HOME: "{{ magento_home }}"
+      register: _magento_search_engine
+      changed_when: false
+
+    - name: Require the OpenSearch Magento configuration
+      ansible.builtin.assert:
+        that:
+          - _magento_search_engine.stdout | trim == 'opensearch'
+        fail_msg: "Magento is not configured to use OpenSearch."
+        quiet: true
+
+    - name: Verify the Magento HTTP response
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ magento_http_port }}/"
+        method: GET
+        headers:
+          Host: "{{ magento_server_name }}"
+        status_code: 200
+
+    - name: Write the non-secret version record
+      ansible.builtin.copy:
+        dest: "{{ magento_versions_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          Version snapshot date: {{ magento_version_snapshot_date }}
+          Magento target: {{ magento_version }}
+          Magento installed: {{ _magento_application_version_actual.stdout }}
+          Magento source ref: {{ magento_source_ref }}
+          Magento source commit: {{ _magento_source_revision.stdout }}
+          Ubuntu: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          PHP runtime: {{ _magento_php_version_actual.stdout }}
+          PHP package: {{ _magento_php_package_version.stdout }}
+          MySQL runtime: {{ _magento_mysql_version_actual.stdout }}
+          MySQL package: {{ _magento_mysql_package_version.stdout }}
+          OpenSearch: {{ _magento_opensearch_info.json.version.number }}
+          Composer: {{ _magento_composer_version_actual.stdout }}
+          Nginx runtime: {{ _magento_nginx_version_actual.stderr }}
+          Nginx package: {{ _magento_nginx_package_version.stdout }}

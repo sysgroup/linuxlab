@@ -1,0 +1,14 @@
+upstream fastcgi_backend {
+    server unix:/run/php/php{{ magento_php_series }}-fpm-{{ magento_user }}.sock;
+}
+
+server {
+    listen {{ magento_http_port }} default_server;
+    server_name {{ magento_server_name }} _;
+
+    access_log /var/log/nginx/magento-lab.access.log;
+    error_log /var/log/nginx/magento-lab.error.log warn;
+
+    set $MAGE_ROOT {{ magento_root }};
+    include {{ magento_root }}/nginx.conf.sample;
+}

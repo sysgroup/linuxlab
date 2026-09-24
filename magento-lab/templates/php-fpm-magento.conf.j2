@@ -1,0 +1,14 @@
+[magento]
+user = {{ magento_user }}
+group = {{ magento_group }}
+
+listen = /run/php/php{{ magento_php_series }}-fpm-{{ magento_user }}.sock
+listen.owner = {{ magento_user }}
+listen.group = nginx
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
